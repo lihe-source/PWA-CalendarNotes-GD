@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#111827">
-  <script>try{document.documentElement.dataset.theme=localStorage.getItem('calendarNotesTheme')||'dark';document.documentElement.dataset.uiStyle=localStorage.getItem('calendarNotesUiStyle')||'windows10'}catch{document.documentElement.dataset.theme='dark';document.documentElement.dataset.uiStyle='windows10'}</script>
+  <script>try{const t=localStorage.getItem('calendarNotesTheme')||'dark';const raw=localStorage.getItem('calendarNotesUiStyle')||'cartoon-lime';const map={windows10:'cartoon-lime',mac:'cartoon-lime',ios26:'cartoon-lime',cartoon:'cartoon-lime'};const styles=['cartoon-lime','cartoon-sky','cartoon-peach','cartoon-lavender','cartoon-berry'];const u=map[raw]||raw;document.documentElement.dataset.theme=t;document.documentElement.dataset.uiStyle=styles.includes(u)?u:'cartoon-lime'}catch{document.documentElement.dataset.theme='dark';document.documentElement.dataset.uiStyle='cartoon-lime'}</script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="行事曆備註">
@@ -59,8 +59,13 @@
         <div class="settings-grid">
           <div class="panel">
             <h2>Google 帳號</h2>
-            <p id="googleStatus">尚未登入</p>
-            <div class="button-row"><button id="googleLoginBtn" class="primary">登入 / 授權 Google Drive</button><button id="googleLogoutBtn" class="secondary">登出</button></div>
+            <div id="googleIdentityCard" class="google-identity hidden" aria-live="polite">
+              <div class="google-avatar-wrap"><img id="googleAvatar" class="google-avatar hidden" alt=""><span id="googleAvatarFallback" class="google-avatar-fallback">G</span></div>
+              <div class="google-identity-text"><strong id="googleIdentityName">Google 使用者</strong><span id="googleIdentityEmail"></span></div>
+              <span id="googleIdentityBadge" class="google-login-badge">已登入</span>
+            </div>
+            <p id="googleStatus" class="hint">尚未登入</p>
+            <div class="button-row"><button id="googleLoginBtn" class="primary">登入 / 授權 Google Drive</button><button id="googleLogoutBtn" class="secondary hidden">登出</button></div>
             <p class="hint">會記住此裝置最近登入的 Google 帳號；重新開啟時會先恢復有效授權，若權杖已到期則自動嘗試無畫面重新授權。Google 要求重新驗證時才需要再次按登入。</p>
           </div>
 
@@ -87,13 +92,14 @@
             </div>
             <label for="uiStyleSelect">介面風格
               <select id="uiStyleSelect" aria-label="介面風格">
-                <option value="windows10">Windows 10 風格</option>
-                <option value="mac">Mac 風格</option>
-                <option value="ios26">iOS 26 風格</option>
-                <option value="cartoon">卡通風格（黃綠色）</option>
+                <option value="cartoon-lime">卡通・黃綠草地</option>
+                <option value="cartoon-sky">卡通・天空藍</option>
+                <option value="cartoon-peach">卡通・蜜桃橘</option>
+                <option value="cartoon-lavender">卡通・薰衣草紫</option>
+                <option value="cartoon-berry">卡通・莓果粉</option>
               </select>
             </label>
-            <p class="hint">黑／白模式與介面風格會記錄在此裝置，下次開啟會直接套用。</p>
+            <p class="hint">黑／白模式與卡通配色會記錄在此裝置，下次開啟會直接套用。</p>
           </div>
 
           <div class="panel">

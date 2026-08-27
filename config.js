@@ -1,7 +1,7 @@
 // ====== 部署後只需要修改這個檔案 ======
 window.APP_CONFIG = {
   APP_NAME: '行事曆・備註提醒',
-  VERSION: 'V1.3.0',
+  VERSION: 'V1.4.0',
 
   // Cloudflare Worker 部署後取得，例如：
   // https://calendar-notes-pwa-api.your-subdomain.workers.dev

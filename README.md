@@ -1,4 +1,4 @@
-# CalendarNotesPWA V1.3.0
+# CalendarNotesPWA V1.4.0
 
 GitHub Pages + Cloudflare Workers/D1 + Google Drive API 的行事曆、備註、提醒 PWA。
 
@@ -86,7 +86,7 @@ Google OAuth Authorized JavaScript origins 需加入 `http://localhost:8000`。
 - 手機月曆固定在單頁高度，左右滑切換月份。
 
 
-## V1.3.0 行程預設值更新
+## V1.4.0 行程預設值更新
 
 - 新增行程的提醒預設勾選「準時」。
 - 新增行程的開始時間預設為開啟視窗當下時間。
@@ -94,7 +94,7 @@ Google OAuth Authorized JavaScript origins 需加入 `http://localhost:8000`。
 - 新增行程時，若尚未手動修改結束時間，變更開始時間會同步將結束時間調整為 +1 小時。
 
 
-## V1.3.0 重要更新
+## V1.4.0 重要更新
 - Google 帳號可跨 PWA 關閉/重新開啟保留，並在 token 到期時嘗試 prompt=none 自動重新授權。
 - 手機新增/編輯 Dialog 改成固定容器，中間欄位獨立捲動，不再水平溢出。
 - 月曆左側加入 ISO WK 週別；2026/08/27 = WK35。
@@ -104,7 +104,14 @@ Google OAuth Authorized JavaScript origins 需加入 `http://localhost:8000`。
 - 本版 worker.js 有更新，更新 GitHub Pages 後需再次執行 `npx wrangler deploy`。
 
 
-## V1.3.0 介面更新
+## V1.4.0 介面更新
 - 月曆事件與假日標籤固定從日期下方往下排列。
-- 設定頁可選 Windows 10 / Mac / iOS 26 / 卡通（黃綠）風格，並在本機持久保存。
+- 設定頁提供 5 款卡通風格配色（黃綠草地、天空藍、蜜桃橘、薰衣草紫、莓果粉），並在本機持久保存。
 - 黑/白模式仍可獨立切換。
+
+
+## V1.4.0
+- 介面風格精簡為 5 款卡通配色：黃綠草地、天空藍、蜜桃橘、薰衣草紫、莓果粉。
+- 手機月曆的當日事項區增加高度，維持月曆單頁固定瀏覽。
+- 修正 iOS 關閉懸浮視窗後 viewport/頁面高度可能殘留空白的問題。
+- Google 已登入時改顯示帳號頭像、名稱、Email 與登入狀態，隱藏重複登入按鈕。

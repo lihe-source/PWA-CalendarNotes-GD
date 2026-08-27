@@ -16,7 +16,7 @@ async function boot(){
   $('#appTitle').textContent=cfg.APP_NAME;
   const savedTheme=localStorage.getItem('calendarNotesTheme')||await getMeta('theme','dark');
   applyTheme(savedTheme,false);
-  const savedUiStyle=localStorage.getItem('calendarNotesUiStyle')||await getMeta('uiStyle','windows10');
+  const savedUiStyle=localStorage.getItem('calendarNotesUiStyle')||await getMeta('uiStyle','cartoon-lime');
   applyUiStyle(savedUiStyle,false);
   bindUi();
   await registerServiceWorker();
@@ -42,11 +42,12 @@ function bindUi(){
   $('#nextMonthBtn').onclick=()=>changeMonth(1);
   $('#todayBtn').onclick=()=>{const n=new Date();state.monthCursor=new Date(n.getFullYear(),n.getMonth(),1);state.selectedDate=n;renderCalendar();renderDayEvents()};
   $('#addEventBtn').onclick=()=>openEventEditor(); $('#addNoteBtn').onclick=()=>openNoteEditor();
-  $('#quickAddBtn').onclick=()=>$('#quickDialog').showModal(); $('#quickClose').onclick=()=>$('#quickDialog').close();
-  $('#quickEvent').onclick=()=>{$('#quickDialog').close();openEventEditor()}; $('#quickNote').onclick=()=>{$('#quickDialog').close();openNoteEditor()};
+  $('#quickAddBtn').onclick=()=>openAppDialog($('#quickDialog')); $('#quickClose').onclick=()=>closeAppDialog($('#quickDialog'));
+  $('#quickEvent').onclick=()=>{closeAppDialog($('#quickDialog'));openEventEditor()}; $('#quickNote').onclick=()=>{closeAppDialog($('#quickDialog'));openNoteEditor()};
   $('#saveItemBtn').onclick=saveEditor; $('#deleteItemBtn').onclick=deleteEditorItem;
   $('#editorCloseBtn').onclick=closeEditor; $('#editorCancelBtn').onclick=closeEditor;
   $('#editorDialog').addEventListener('cancel',e=>{e.preventDefault();closeEditor()});
+  $$('#editorDialog, #quickDialog').forEach(d=>d.addEventListener('close',releaseModalViewport));
   $('#noteSearch').addEventListener('input',renderNotes);
   $('#syncBtn').onclick=()=>syncAll(true);
   $('#googleLoginBtn').onclick=googleLogin; $('#googleLogoutBtn').onclick=googleLogout;
@@ -83,7 +84,29 @@ function bindCalendarSwipe(){
   el.addEventListener('touchend',e=>{if(!tracking)return;if(e.changedTouches?.length){dx=e.changedTouches[0].clientX-sx;dy=e.changedTouches[0].clientY-sy}tracking=false;if(Math.abs(dx)>=52&&Math.abs(dx)>Math.abs(dy)*1.25)changeMonth(dx<0?1:-1)},{passive:true});
   el.addEventListener('touchcancel',()=>{tracking=false},{passive:true});
 }
-function closeEditor(){state.editing=null;const d=$('#editorDialog');if(d.open)d.close()}
+let modalReturnScrollY=0;
+function openAppDialog(dialog){
+  if(!dialog||dialog.open)return;
+  modalReturnScrollY=window.scrollY||0;
+  document.documentElement.classList.add('modal-open');document.body.classList.add('modal-open');
+  dialog.showModal();
+}
+function closeAppDialog(dialog){
+  if(!dialog?.open)return;
+  const active=document.activeElement;if(active&&typeof active.blur==='function')active.blur();
+  dialog.close();
+}
+function releaseModalViewport(){
+  requestAnimationFrame(()=>{
+    if(document.querySelector('dialog[open]'))return;
+    document.documentElement.classList.remove('modal-open');document.body.classList.remove('modal-open');
+    const maxScroll=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
+    window.scrollTo(0,Math.min(modalReturnScrollY,maxScroll));
+    // iOS 在鍵盤 / dialog 關閉後偶爾延後更新 visual viewport，再校正一次避免頁面底部多出空白。
+    setTimeout(()=>{const max2=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);window.scrollTo(0,Math.min(modalReturnScrollY,max2))},80);
+  });
+}
+function closeEditor(){state.editing=null;closeAppDialog($('#editorDialog'))}
 async function applyTheme(theme,persist=true){
   const value=theme==='light'?'light':'dark';document.documentElement.dataset.theme=value;
   try{localStorage.setItem('calendarNotesTheme',value)}catch{}
@@ -93,8 +116,10 @@ async function applyTheme(theme,persist=true){
 }
 
 async function applyUiStyle(style,persist=true){
-  const allowed=new Set(['windows10','mac','ios26','cartoon']);
-  const value=allowed.has(style)?style:'windows10';
+  const legacyMap={windows10:'cartoon-lime',mac:'cartoon-lime',ios26:'cartoon-lime',cartoon:'cartoon-lime'};
+  const allowed=new Set(['cartoon-lime','cartoon-sky','cartoon-peach','cartoon-lavender','cartoon-berry']);
+  const migrated=legacyMap[style]||style;
+  const value=allowed.has(migrated)?migrated:'cartoon-lime';
   document.documentElement.dataset.uiStyle=value;
   try{localStorage.setItem('calendarNotesUiStyle',value)}catch{}
   const select=$('#uiStyleSelect');if(select)select.value=value;
@@ -137,10 +162,27 @@ function renderNotes(){
   arr.forEach(n=>{const div=document.createElement('button');div.className='list-item';div.innerHTML=`<div class="grow"><h4>${n.pinned?'📌 ':''}${esc(n.title)}</h4><div class="meta">${formatDateTime(n.updated_at)} ${n.reminder_at?' · 🔔 '+formatDateTime(n.reminder_at):''}</div>${n.content?`<div class="snippet">${esc(shorten(n.content,150))}</div>`:''}<div>${(n.tags||[]).slice(0,5).map(t=>`<span class="badge">${esc(t)}</span>`).join('')}</div></div>`;div.onclick=()=>openNoteEditor(n);box.appendChild(div)});
 }
 function renderStatusPanels(){
-  const hasToken=!!getAccessToken();
-  if(hasToken&&state.profile) $('#googleStatus').textContent=`已登入：${state.profile.name||state.profile.email}`;
-  else if(state.authStatus==='reconnecting'&&state.profile) $('#googleStatus').textContent=`自動連線中：${state.profile.name||state.profile.email}`;
-  else if(state.profile) $('#googleStatus').textContent=`已記住帳號：${state.profile.name||state.profile.email}`;
+  const hasToken=!!getAccessToken();const connected=hasToken&&!!state.profile;
+  const card=$('#googleIdentityCard'),avatar=$('#googleAvatar'),fallback=$('#googleAvatarFallback');
+  if(state.profile){
+    card?.classList.remove('hidden');
+    if($('#googleIdentityName'))$('#googleIdentityName').textContent=state.profile.name||state.profile.email||'Google 使用者';
+    if($('#googleIdentityEmail'))$('#googleIdentityEmail').textContent=state.profile.email||'';
+    const initial=(state.profile.name||state.profile.email||'G').trim().charAt(0).toUpperCase()||'G';
+    if(fallback){fallback.textContent=initial;fallback.classList.toggle('hidden',!!state.profile.picture)}
+    if(avatar){
+      if(state.profile.picture){avatar.src=state.profile.picture;avatar.alt=`${state.profile.name||'Google 使用者'} 的 Google 帳號頭像`;avatar.classList.remove('hidden')}
+      else{avatar.removeAttribute('src');avatar.classList.add('hidden')}
+      avatar.onerror=()=>{avatar.classList.add('hidden');fallback?.classList.remove('hidden')};
+    }
+    if($('#googleIdentityBadge'))$('#googleIdentityBadge').textContent=connected?'已登入':'已記住';
+  }else card?.classList.add('hidden');
+  const loginBtn=$('#googleLoginBtn'),logoutBtn=$('#googleLogoutBtn');
+  if(loginBtn){loginBtn.classList.toggle('hidden',connected);loginBtn.textContent=state.profile?'重新授權 Google Drive':'登入 / 授權 Google Drive'}
+  if(logoutBtn)logoutBtn.classList.toggle('hidden',!state.profile);
+  if(connected) $('#googleStatus').textContent='Google 帳號已連線';
+  else if(state.authStatus==='reconnecting'&&state.profile) $('#googleStatus').textContent='正在自動重新連線 Google…';
+  else if(state.profile) $('#googleStatus').textContent='帳號已記住；Google 要求重新驗證時才需重新授權';
   else $('#googleStatus').textContent='尚未登入';
   $('#driveStatus').textContent=state.driveRoot?`Folder ID：${state.driveRoot}`:'尚未設定';
   $('#pushStatus').textContent=('Notification'in window)?`通知權限：${Notification.permission}`:'此瀏覽器不支援通知';
@@ -186,7 +228,7 @@ function openEventEditor(item=null){
     endInput.addEventListener('input',()=>{autoEnd=false});
   }
 
-  $('#editorDialog').showModal();
+  openAppDialog($('#editorDialog'));
 }
 function openNoteEditor(item=null){
   state.editing={kind:'notes',item:item?structuredClone(item):null};$('#editorTitle').textContent=item?'編輯備註':'新增備註';$('#deleteItemBtn').classList.toggle('hidden',!item);
@@ -200,7 +242,7 @@ function openNoteEditor(item=null){
     ${attachmentsHtml(item?.attachment_meta||[])}
     <label>新增照片 / 附件<input id="fFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"></label>
   `;
-  $('#editorDialog').showModal();
+  openAppDialog($('#editorDialog'));
 }
 function attachmentsHtml(items){if(!items.length)return '<div class="hint">目前沒有附件。</div>';return `<div class="attachment-list">${items.map(a=>`<div class="attachment">${a.mimeType?.startsWith('image/')&&a.thumbnailLink?`<img class="attachment-thumb" src="${attr(a.thumbnailLink)}" alt="">`:'📎'} <a href="${attr(a.webViewLink||'#')}" target="_blank" rel="noopener">${esc(a.name||'附件')}</a><span class="meta">${formatBytes(a.size)}</span></div>`).join('')}</div>`}
 
@@ -215,13 +257,13 @@ async function saveEditor(){
       const rem=$('#fReminderAt').value;item={...old,id,title,content:$('#fContent').value,category:$('#fCategory').value,tags:$('#fTags').value.split(',').map(x=>x.trim()).filter(Boolean),pinned:$('#fPinned').checked,completed:$('#fCompleted').checked,reminder_at:rem?new Date(rem).toISOString():null,attachment_meta:[...(old.attachment_meta||[])],revision:Number(old.revision||0),created_at:old.created_at||now,updated_at:now,deleted_at:null};
     }
     const files=[...($('#fFiles')?.files||[])];if(files.length){item.attachment_meta.push(...await uploadAttachments(id,files));}
-    await dbPut(ed.kind,item);replaceStateItem(ed.kind,item);renderAll();$('#editorDialog').close();toast('已儲存');
+    await dbPut(ed.kind,item);replaceStateItem(ed.kind,item);renderAll();closeAppDialog($('#editorDialog'));toast('已儲存');
     if(getAccessToken()&&navigator.onLine){const saved=await saveRemote(ed.kind,item);replaceStateItem(ed.kind,saved);renderAll();}else{await saveRemote(ed.kind,item)}
   }catch(e){console.error(e);toast(`儲存失敗：${friendlyError(e)}`)}
 }
 async function deleteEditorItem(){
   const ed=state.editing;if(!ed?.item)return;if(!confirm(`確定刪除「${ed.item.title}」？\nGoogle Drive 已上傳附件不會自動刪除。`))return;
-  try{const tomb=await deleteRemote(ed.kind,ed.item);state[ed.kind]=state[ed.kind].filter(x=>x.id!==ed.item.id);renderAll();$('#editorDialog').close();toast('已刪除')}catch(e){toast(`刪除失敗：${friendlyError(e)}`)}
+  try{const tomb=await deleteRemote(ed.kind,ed.item);state[ed.kind]=state[ed.kind].filter(x=>x.id!==ed.item.id);renderAll();closeAppDialog($('#editorDialog'));toast('已刪除')}catch(e){toast(`刪除失敗：${friendlyError(e)}`)}
 }
 function replaceStateItem(kind,item){const arr=state[kind];const i=arr.findIndex(x=>x.id===item.id);if(item.deleted_at){if(i>=0)arr.splice(i,1);return}if(i>=0)arr[i]=item;else arr.push(item)}
 

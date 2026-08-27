@@ -1,0 +1,23 @@
+CalendarNotesPWA V1.4.0 更新內容
+
+1. 介面主題
+- 移除 Windows 10、Mac、iOS 26。
+- 保留卡通造型並增加為 5 款配色：黃綠草地、天空藍、蜜桃橘、薰衣草紫、莓果粉。
+- 舊版 windows10/mac/ios26/cartoon 選擇會自動遷移到「卡通・黃綠草地」。
+- 選擇以 localStorage + IndexedDB 保存。
+
+2. 手機月曆當日事項
+- 將當日事項區調整為約 26dvh，並以 flex 分配可用空間。
+- 事件清單本身可捲動，但不再只有約 66px 高度。
+- 說明可顯示最多兩行，閱讀性提高。
+
+3. iOS 懸浮視窗關閉後排版
+- 新增統一 openAppDialog/closeAppDialog。
+- 關閉時先 blur 鍵盤焦點，清除 modal lock，並以兩階段 viewport scroll 校正避免頁面底部異常空白。
+
+4. Google 帳號顯示
+- 登入後顯示 Google 頭像、使用者名稱、Email 與「已登入」標籤。
+- 已登入時隱藏「登入 / 授權 Google Drive」按鈕，只保留登出。
+- 權杖到期但帳號仍記住時，按鈕改顯示「重新授權 Google Drive」。
+
+部署：本版只有 GitHub Pages 前端變更，不需重新部署 Cloudflare Worker，不需重建 D1。

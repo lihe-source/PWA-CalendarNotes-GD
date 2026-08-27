@@ -1,6 +1,6 @@
 {
-  "version": "V1.3.0",
-  "build": 130,
-  "releasedAt": "2026-08-27T22:45:00+08:00",
-  "notes": "Calendar chips now stack from the top; added persistent Windows 10, Mac, iOS 26, and yellow-green cartoon UI styles."
+  "version": "V1.4.0",
+  "build": 140,
+  "releasedAt": "2026-08-27T23:15:00+08:00",
+  "notes": "Five cartoon color themes, larger mobile day-event panel, stable iOS dialog close layout, and logged-in Google identity card."
 }
