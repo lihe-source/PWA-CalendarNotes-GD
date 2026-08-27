@@ -1,0 +1,41 @@
+CalendarNotesPWA V1.0.0 - 扁平化檔案
+
+前端 GitHub Pages：
+- index.html
+- style.css
+- app.js
+- api.js
+- db.js
+- google-drive.js
+- push.js
+- config.js             <-- 部署後必改
+- service-worker.js
+- manifest.json
+- version.json
+- icon-192.png
+- icon-512.png
+- .nojekyll
+
+Cloudflare Worker：
+- worker.js
+- schema.sql
+- wrangler.jsonc        <-- D1 ID / Origin / email 必改
+- package.json
+- generate-vapid.mjs
+
+文件：
+- README.md
+- DEPLOY_CLOUDFLARE.md
+- FILES_AND_EDIT_POINTS.txt
+
+絕對不要把以下值直接寫進 GitHub：
+- VAPID_PRIVATE_KEY
+
+Cloudflare secrets：
+- VAPID_PUBLIC_KEY
+- VAPID_PRIVATE_KEY
+
+GitHub 前端可以公開：
+- GOOGLE_CLIENT_ID
+- VAPID_PUBLIC_KEY
+- Worker URL

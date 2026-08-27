@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="行事曆備註">
+  <title>行事曆・備註提醒</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="appShell">
+    <header class="app-header">
+      <div>
+        <h1 id="appTitle">行事曆・備註提醒</h1>
+        <div id="statusLine" class="status-line">離線資料可使用</div>
+      </div>
+      <button id="syncBtn" class="icon-btn" aria-label="同步">↻</button>
+    </header>
+
+    <main id="main">
+      <section id="calendarView" class="view active">
+        <div class="toolbar">
+          <button id="prevMonthBtn" class="secondary">‹</button>
+          <button id="todayBtn" class="secondary">今天</button>
+          <h2 id="monthLabel"></h2>
+          <button id="nextMonthBtn" class="secondary">›</button>
+        </div>
+        <div class="weekday-row">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div id="monthGrid" class="month-grid"></div>
+        <div class="panel">
+          <div class="panel-head"><h3 id="selectedDateLabel">今日事項</h3><button id="addEventBtn" class="primary small">＋ 行程</button></div>
+          <div id="dayEvents" class="list"></div>
+        </div>
+      </section>
+
+      <section id="notesView" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>備註 / 待辦</h2>
+            <button id="addNoteBtn" class="primary small">＋ 備註</button>
+          </div>
+          <input id="noteSearch" class="search" placeholder="搜尋標題、內容、標籤">
+          <div id="notesList" class="list"></div>
+        </div>
+      </section>
+
+      <section id="settingsView" class="view">
+        <div class="settings-grid">
+          <div class="panel">
+            <h2>Google 帳號</h2>
+            <p id="googleStatus">尚未登入</p>
+            <div class="button-row"><button id="googleLoginBtn" class="primary">登入 / 授權 Google Drive</button><button id="googleLogoutBtn" class="secondary">登出</button></div>
+            <p class="hint">Google 的存取權杖屬短效權杖；到期後需再次由使用者操作授權。</p>
+          </div>
+
+          <div class="panel">
+            <h2>Google Drive 共用資料夾</h2>
+            <label>共用資料夾 URL 或 Folder ID
+              <input id="driveFolderInput" placeholder="https://drive.google.com/drive/folders/...">
+            </label>
+            <div class="button-row"><button id="verifyDriveBtn" class="primary">測試並儲存</button><button id="backupBtn" class="secondary">立即備份</button><button id="restoreBtn" class="secondary">還原最新備份</button></div>
+            <div id="driveStatus" class="hint">尚未設定</div>
+          </div>
+
+          <div class="panel">
+            <h2>通知提醒</h2>
+            <div class="button-row"><button id="enablePushBtn" class="primary">啟用通知</button><button id="testPushBtn" class="secondary">測試通知</button></div>
+            <p id="pushStatus" class="hint">尚未啟用</p>
+          </div>
+
+          <div class="panel">
+            <h2>同步與系統</h2>
+            <label>時區<input id="timezoneInput" value="Asia/Taipei"></label>
+            <div class="kv"><span>目前版本</span><strong id="currentVersion"></strong></div>
+            <div class="kv"><span>最新版本</span><strong id="latestVersion">檢查中…</strong></div>
+            <div class="kv"><span>最後同步</span><strong id="lastSync">—</strong></div>
+            <div class="button-row"><button id="checkUpdateBtn" class="secondary">檢查更新</button><button id="forceUpdateBtn" class="secondary">清除快取並更新</button></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button data-view="calendar" class="nav-btn active"><span>📅</span><small>行事曆</small></button>
+      <button data-view="notes" class="nav-btn"><span>📝</span><small>備註</small></button>
+      <button id="quickAddBtn" class="fab" aria-label="快速新增">＋</button>
+      <button data-view="settings" class="nav-btn"><span>⚙️</span><small>設定</small></button>
+    </nav>
+  </div>
+
+  <dialog id="editorDialog">
+    <form method="dialog" id="editorForm">
+      <div class="dialog-head"><h2 id="editorTitle">新增</h2><button value="cancel" class="icon-btn">✕</button></div>
+      <div id="editorFields"></div>
+      <div class="dialog-actions"><button type="button" id="deleteItemBtn" class="danger hidden">刪除</button><span class="spacer"></span><button value="cancel" class="secondary">取消</button><button type="button" id="saveItemBtn" class="primary">儲存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="quickDialog">
+    <div class="quick-menu">
+      <button id="quickEvent">📅 新增行程</button>
+      <button id="quickNote">📝 新增備註</button>
+      <button id="quickClose" class="secondary">取消</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

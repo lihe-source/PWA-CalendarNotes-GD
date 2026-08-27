@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "calendar-notes-pwa-api",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-27",
+  "observability": { "enabled": true },
+  "vars": {
+    "ALLOWED_ORIGINS": "https://YOUR_GITHUB_USERNAME.github.io,http://localhost:8000,http://127.0.0.1:8000",
+    "VAPID_SUBJECT": "mailto:YOUR_EMAIL@example.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "calendar-notes-pwa-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+}
