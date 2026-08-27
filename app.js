@@ -6,8 +6,8 @@ import { getTaiwanHoliday } from './holidays.js';
 
 const cfg=window.APP_CONFIG;
 const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
-const state={events:[],notes:[],selectedDate:new Date(),monthCursor:new Date(new Date().getFullYear(),new Date().getMonth(),1),editing:null,driveRoot:'',driveFolders:null,profile:null,lastSync:null};
-let tokenClient=null; let toastTimer=null;
+const state={events:[],notes:[],selectedDate:new Date(),monthCursor:new Date(new Date().getFullYear(),new Date().getMonth(),1),editing:null,driveRoot:'',driveFolders:null,profile:null,lastSync:null,authStatus:'signedOut'};
+let tokenClient=null; let toastTimer=null; let tokenRequestMode='manual';
 
 boot().catch(e=>{console.error(e);toast(`啟動失敗：${friendlyError(e)}`)});
 
@@ -19,7 +19,7 @@ async function boot(){
   bindUi();
   await registerServiceWorker();
   await loadLocal();
-  restoreSessionToken();
+  await restorePersistentGoogleSession();
   state.driveRoot=await getMeta('driveRoot','');
   $('#driveFolderInput').value=state.driveRoot||'';
   $('#timezoneInput').value=await getMeta('timezone',cfg.DEFAULT_TIMEZONE);
@@ -27,6 +27,7 @@ async function boot(){
   renderAll();
   await checkUpdate(true);
   if(getAccessToken()) await afterLogin(false);
+  else if(state.profile) autoReconnectGoogle();
   setInterval(()=>{if(getAccessToken()&&navigator.onLine) syncAll(false).catch(console.warn)},cfg.AUTO_SYNC_INTERVAL_MS);
   window.addEventListener('online',()=>{setStatus('已連線，正在同步…');syncAll(false).catch(console.warn)});
   window.addEventListener('offline',()=>setStatus('離線模式：資料會保存在此裝置'));
@@ -92,6 +93,7 @@ function renderCalendar(){
   const y=state.monthCursor.getFullYear(),m=state.monthCursor.getMonth(); $('#monthLabel').textContent=`${y} 年 ${m+1} 月`;
   const first=new Date(y,m,1); const start=new Date(y,m,1-first.getDay()); const todayKey=dateKey(new Date()); const selectedKey=dateKey(state.selectedDate);
   const grid=$('#monthGrid');grid.innerHTML='';
+  const weekBox=$('#weekNumbers');if(weekBox){weekBox.innerHTML='';for(let row=0;row<6;row++){const rowStart=new Date(start);rowStart.setDate(start.getDate()+row*7);const marker=new Date(rowStart);marker.setDate(rowStart.getDate()+4);const rowEnd=new Date(rowStart);rowEnd.setDate(rowStart.getDate()+6);const wk=document.createElement('div');wk.className='week-number';if(state.selectedDate>=rowStart&&state.selectedDate<=new Date(rowEnd.getFullYear(),rowEnd.getMonth(),rowEnd.getDate(),23,59,59,999))wk.classList.add('active');wk.textContent=`WK${String(isoWeekNumber(marker)).padStart(2,'0')}`;weekBox.appendChild(wk)}}
   for(let i=0;i<42;i++){
     const d=new Date(start);d.setDate(start.getDate()+i);const key=dateKey(d);const cell=document.createElement('button');
     const weekday=d.getDay(); const holiday=getTaiwanHoliday(key);
@@ -105,7 +107,8 @@ function renderCalendar(){
     const holidayHtml=holiday?`<span class="holiday-chip" title="${attr(holiday.name)}">${esc(holiday.name)}</span>`:'';
     const eventsHtml=evs.slice(0,3).map(e=>`<span class="event-dot">${esc(e.title)}</span>`).join('');
     cell.innerHTML=`<span class="day-num">${d.getDate()}</span>${holidayHtml}${eventsHtml}${evs.length>3?`<div class="more-dot">+${evs.length-3}</div>`:''}`;
-    cell.onclick=()=>{state.selectedDate=new Date(d);if(d.getMonth()!==m)state.monthCursor=new Date(d.getFullYear(),d.getMonth(),1);renderCalendar();renderDayEvents()};grid.appendChild(cell);
+    // 點選前後月份的灰色日期時只選取日期，不自動重排月份，保留上一週與目前視覺位置。
+    cell.onclick=()=>{state.selectedDate=new Date(d);renderCalendar();renderDayEvents()};grid.appendChild(cell);
   }
 }
 function renderDayEvents(){
@@ -120,7 +123,11 @@ function renderNotes(){
   arr.forEach(n=>{const div=document.createElement('button');div.className='list-item';div.innerHTML=`<div class="grow"><h4>${n.pinned?'📌 ':''}${esc(n.title)}</h4><div class="meta">${formatDateTime(n.updated_at)} ${n.reminder_at?' · 🔔 '+formatDateTime(n.reminder_at):''}</div>${n.content?`<div class="snippet">${esc(shorten(n.content,150))}</div>`:''}<div>${(n.tags||[]).slice(0,5).map(t=>`<span class="badge">${esc(t)}</span>`).join('')}</div></div>`;div.onclick=()=>openNoteEditor(n);box.appendChild(div)});
 }
 function renderStatusPanels(){
-  $('#googleStatus').textContent=state.profile?`已登入：${state.profile.name||state.profile.email}`:(getAccessToken()?'已取得 Google 授權':'尚未登入');
+  const hasToken=!!getAccessToken();
+  if(hasToken&&state.profile) $('#googleStatus').textContent=`已登入：${state.profile.name||state.profile.email}`;
+  else if(state.authStatus==='reconnecting'&&state.profile) $('#googleStatus').textContent=`自動連線中：${state.profile.name||state.profile.email}`;
+  else if(state.profile) $('#googleStatus').textContent=`已記住帳號：${state.profile.name||state.profile.email}`;
+  else $('#googleStatus').textContent='尚未登入';
   $('#driveStatus').textContent=state.driveRoot?`Folder ID：${state.driveRoot}`:'尚未設定';
   $('#pushStatus').textContent=('Notification'in window)?`通知權限：${Notification.permission}`:'此瀏覽器不支援通知';
 }
@@ -211,20 +218,37 @@ async function uploadAttachments(itemId,files){
   setStatus('附件上傳完成');return out;
 }
 
+async function waitForGoogleIdentity(timeoutMs=8000){
+  const started=Date.now();while(!window.google?.accounts?.oauth2){if(Date.now()-started>timeoutMs)throw new Error('Google Identity Services 載入逾時');await new Promise(r=>setTimeout(r,120))}return true;
+}
 function initTokenClient(){
   if(tokenClient)return tokenClient;if(!window.google?.accounts?.oauth2)throw new Error('Google Identity Services 尚未載入，請確認網路');
   if(!cfg.GOOGLE_CLIENT_ID||cfg.GOOGLE_CLIENT_ID.startsWith('REPLACE_'))throw new Error('請先在 config.js 設定 GOOGLE_CLIENT_ID');
   tokenClient=google.accounts.oauth2.initTokenClient({client_id:cfg.GOOGLE_CLIENT_ID,scope:cfg.GOOGLE_SCOPES,callback:async response=>{
-    if(response.error){toast(`Google 授權失敗：${response.error}`);return}setAccessToken(response.access_token);const expiresAt=Date.now()+(Number(response.expires_in||3600)-60)*1000;sessionStorage.setItem('googleToken',JSON.stringify({token:response.access_token,expiresAt}));await afterLogin(true);
-  }});return tokenClient;
+    const mode=tokenRequestMode;tokenRequestMode='manual';
+    if(response.error){state.authStatus=state.profile?'remembered':'signedOut';renderStatusPanels();if(mode!=='auto')toast(`Google 授權失敗：${response.error}`);else setStatus('Google 帳號已記住；Google 目前要求重新授權');return}
+    setAccessToken(response.access_token);const expiresAt=Date.now()+(Number(response.expires_in||3600)-60)*1000;state.authStatus='connected';await setMeta('googleSession',{token:response.access_token,expiresAt,profile:state.profile||null});await afterLogin(mode!=='auto');
+  },error_callback:error=>{const mode=tokenRequestMode;tokenRequestMode='manual';state.authStatus=state.profile?'remembered':'signedOut';renderStatusPanels();if(mode!=='auto')toast(`Google 授權視窗失敗：${error?.type||'unknown'}`)}});return tokenClient;
 }
-function googleLogin(){try{initTokenClient().requestAccessToken({prompt:''})}catch(e){toast(friendlyError(e))}}
-function restoreSessionToken(){try{const x=JSON.parse(sessionStorage.getItem('googleToken')||'null');if(x?.token&&x.expiresAt>Date.now()){setAccessToken(x.token)}}catch{}}
+async function googleLogin(){try{await waitForGoogleIdentity();tokenRequestMode='manual';initTokenClient().requestAccessToken({prompt:'',login_hint:state.profile?.email||''})}catch(e){toast(friendlyError(e))}}
+async function restorePersistentGoogleSession(){
+  try{
+    let saved=await getMeta('googleSession',null);
+    if(!saved){const legacy=JSON.parse(sessionStorage.getItem('googleToken')||'null');if(legacy?.token&&legacy.expiresAt>Date.now()){saved={...legacy,profile:null};await setMeta('googleSession',saved)}}
+    if(!saved)return;state.profile=saved.profile||null;
+    if(saved.token&&Number(saved.expiresAt)>Date.now()){setAccessToken(saved.token);state.authStatus='connected'}
+    else{setAccessToken('');state.authStatus=state.profile?'remembered':'signedOut';await setMeta('googleSession',{token:'',expiresAt:0,profile:state.profile||null})}
+  }catch(e){console.warn('restore Google session failed',e)}
+}
+async function autoReconnectGoogle(){
+  if(getAccessToken()||!state.profile||!navigator.onLine)return;state.authStatus='reconnecting';renderStatusPanels();setStatus(`正在自動連線 Google：${state.profile.email||state.profile.name||''}`);
+  try{await waitForGoogleIdentity();tokenRequestMode='auto';initTokenClient().requestAccessToken({prompt:'none',login_hint:state.profile.email||''})}catch(e){tokenRequestMode='manual';state.authStatus='remembered';renderStatusPanels();setStatus('Google 帳號已記住；需要時可按登入重新授權')}
+}
 async function afterLogin(showToast=true){
-  try{state.profile=await fetchGoogleProfile();renderStatusPanels();setStatus(`Google：${state.profile.email||state.profile.name}`);await syncAll(false);if(state.driveRoot){try{await verifyFolder(state.driveRoot);state.driveFolders=await ensureAppFolders(state.driveRoot);$('#driveStatus').textContent='Google Drive 已連線'}catch(e){$('#driveStatus').textContent=`Drive：${friendlyError(e)}`}}if(showToast)toast('Google 登入成功')}catch(e){console.error(e);if(e.status===401||String(e.message).includes('401'))googleLogout();toast(`登入後同步失敗：${friendlyError(e)}`)}
+  try{state.profile=await fetchGoogleProfile();state.authStatus='connected';const saved=await getMeta('googleSession',{});await setMeta('googleSession',{token:getAccessToken(),expiresAt:Number(saved?.expiresAt||Date.now()+50*60*1000),profile:state.profile});renderStatusPanels();setStatus(`Google：${state.profile.email||state.profile.name}`);await syncAll(false);if(state.driveRoot){try{await verifyFolder(state.driveRoot);state.driveFolders=await ensureAppFolders(state.driveRoot);$('#driveStatus').textContent='Google Drive 已連線'}catch(e){$('#driveStatus').textContent=`Drive：${friendlyError(e)}`}}if(showToast)toast('Google 登入成功')}catch(e){console.error(e);if(String(e.message).includes('已失效')||e.status===401||String(e.message).includes('401')){setAccessToken('');state.authStatus=state.profile?'remembered':'signedOut';await setMeta('googleSession',{token:'',expiresAt:0,profile:state.profile||null});renderStatusPanels();setStatus('Google 帳號已記住，但授權已到期');if(showToast)toast('Google 授權已到期，請重新授權');return}if(showToast)toast(`登入後同步失敗：${friendlyError(e)}`)}
 }
 async function fetchGoogleProfile(){const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${getAccessToken()}`}});if(!r.ok)throw new Error('Google token 已失效');return r.json()}
-function googleLogout(){const t=getAccessToken();if(t&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(t,()=>{});setAccessToken('');sessionStorage.removeItem('googleToken');state.profile=null;renderStatusPanels();setStatus('已登出 Google');toast('已登出')}
+async function googleLogout(){const t=getAccessToken();if(t&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(t,()=>{});setAccessToken('');sessionStorage.removeItem('googleToken');await setMeta('googleSession',null);state.profile=null;state.authStatus='signedOut';renderStatusPanels();setStatus('已登出 Google');toast('已登出')}
 
 async function syncAll(manual=true){
   if(!getAccessToken()){if(manual)toast('請先登入 Google');return}if(!navigator.onLine){if(manual)toast('目前離線');return}
@@ -299,6 +323,7 @@ function occursOnDate(e,key){
 }
 function dateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function parseDateKey(k){const [y,m,d]=k.split('-').map(Number);return new Date(y,m-1,d)}
+function isoWeekNumber(d){const x=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=x.getUTCDay()||7;x.setUTCDate(x.getUTCDate()+4-day);const yearStart=new Date(Date.UTC(x.getUTCFullYear(),0,1));return Math.ceil((((x-yearStart)/86400000)+1)/7)}
 function localInput(d){const z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`}
 function formatTime(iso){return new Date(iso).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})}
 function formatDateTime(iso){if(!iso)return'—';return new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}

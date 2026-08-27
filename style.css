@@ -44,3 +44,47 @@ dialog{width:min(680px,calc(100% - 20px));max-height:88dvh;overflow:auto;border:
 }
 @media(min-width:850px){main{padding:20px}.settings-grid{grid-template-columns:1fr 1fr;gap:12px}.settings-grid .panel{margin-top:0}.day-cell{min-height:118px}.bottom-nav{left:50%;right:auto;width:520px;transform:translateX(-50%);border:1px solid var(--line);border-bottom:0;border-radius:18px 18px 0 0}.event-dot{font-size:12px}.holiday-chip{font-size:11px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
+/* ===== V1.2.0: calendar week gutter / fixed editor ===== */
+.weekday-row{grid-template-columns:40px repeat(7,minmax(0,1fr));align-items:center}
+.weekday-row .week-head{color:var(--muted)!important;font-weight:700;border-right:1px solid var(--line)}
+.weekday-row span:nth-child(2),.weekday-row span:last-child{color:#e75b7e;font-weight:700}
+.calendar-grid-shell{display:grid;grid-template-columns:40px minmax(0,1fr);min-height:0;width:100%;overflow:hidden}
+.week-number-col{display:grid;grid-template-rows:repeat(6,minmax(0,1fr));min-height:0;border-top:1px solid var(--line);border-left:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:14px 0 0 14px;overflow:hidden;background:var(--panel2)}
+.week-number{display:flex;align-items:center;justify-content:center;min-height:82px;padding:2px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--muted);font-size:10px;font-weight:800;letter-spacing:-.2px}
+.week-number:last-child{border-bottom:0}.week-number.active{color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,var(--panel2))}
+.month-grid{grid-template-columns:repeat(7,minmax(0,1fr));border-left:0;border-radius:0 14px 14px 0;min-width:0}
+.day-cell{padding:30px 5px 5px!important;min-width:0}
+.day-num{position:absolute!important;top:5px;left:6px;width:auto!important;height:auto!important;min-width:20px;display:block!important;text-align:left!important;justify-content:initial!important;line-height:20px!important;margin:0!important;z-index:2}
+.day-cell .holiday-chip,.day-cell .event-dot,.day-cell .more-dot{text-align:left!important}
+
+#editorDialog{overflow:hidden!important;padding:0!important;width:min(680px,calc(100vw - 20px));height:min(760px,calc(100dvh - 24px));max-height:calc(100dvh - 24px);margin:auto;overscroll-behavior:none}
+#editorForm{height:100%;min-width:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden}
+#editorDialog .dialog-head{padding:14px 14px 10px;border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
+#editorFields{min-width:0;max-width:100%;overflow-y:auto;overflow-x:hidden;padding:2px 14px 18px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+#editorFields>*{min-width:0;max-width:100%}
+#editorFields label{min-width:0;max-width:100%;overflow:hidden}
+#editorFields input,#editorFields textarea,#editorFields select{min-width:0!important;max-width:100%!important;width:100%!important}
+#editorFields input[type="checkbox"]{width:auto!important;max-width:none!important;flex:0 0 auto}
+#editorFields input[type="datetime-local"]{-webkit-appearance:none;appearance:none;display:block}
+#editorFields .check-row{min-width:0;max-width:100%;overflow:visible}
+#editorFields .check-row label{max-width:100%;white-space:normal}
+#editorDialog .dialog-actions{position:relative!important;bottom:auto!important;margin:0!important;padding:10px 14px calc(10px + var(--safe-bottom));border-top:1px solid var(--line);background:var(--panel);z-index:3;min-width:0}
+
+@media(max-width:849px){
+  .weekday-row{grid-template-columns:32px repeat(7,minmax(0,1fr))!important}
+  .calendar-grid-shell{grid-template-columns:32px minmax(0,1fr);height:100%;min-height:0}
+  .week-number-col{height:100%;min-height:0;border-radius:10px 0 0 10px}
+  .week-number{min-height:0;font-size:8.5px;padding:1px}
+  body.calendar-active .month-grid{height:100%;min-height:0;border-radius:0 10px 10px 0}
+  body.calendar-active .day-cell{padding:22px 3px 3px!important}
+  body.calendar-active .day-num{top:2px;left:4px;min-width:16px;font-size:10.5px!important;line-height:17px!important}
+  #editorDialog{width:calc(100vw - 18px);height:calc(100dvh - max(18px,var(--safe-top)) - max(18px,var(--safe-bottom)));max-height:calc(100dvh - max(18px,var(--safe-top)) - max(18px,var(--safe-bottom)));border-radius:18px}
+  #editorDialog .dialog-head{padding:12px 12px 9px}
+  #editorFields{padding:2px 12px 20px}
+  #editorDialog .dialog-actions{padding:9px 12px calc(9px + var(--safe-bottom))}
+  #editorFields textarea{min-height:112px;resize:none}
+  #editorFields .check-row{gap:7px}
+  #editorFields .check-row label{padding:7px 9px}
+}
+@media(min-width:850px){.week-number{min-height:118px;font-size:11px}}

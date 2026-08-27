@@ -369,14 +369,10 @@ async function processDueReminders(env) {
 
   for (const reminder of due.results || []) {
     const subs = await env.DB.prepare(`SELECT * FROM push_subscriptions WHERE user_sub=?`).bind(reminder.user_sub).all();
+    const notification = await buildReminderNotification(env, reminder);
     let delivered = false;
     for (const sub of subs.results || []) {
-      const ok = await sendPush(env, sub, {
-        title: reminder.title || '提醒',
-        body: reminder.body || (reminder.source_type === 'event' ? '行事曆提醒' : '備註提醒'),
-        url: `?open=${encodeURIComponent(reminder.source_type)}&id=${encodeURIComponent(reminder.source_id)}`,
-        tag: `reminder-${reminder.source_type}-${reminder.source_id}`
-      });
+      const ok = await sendPush(env, sub, notification);
       delivered = delivered || ok;
     }
 
@@ -403,6 +399,43 @@ async function processDueReminders(env) {
         }
       }
     }
+  }
+}
+
+async function buildReminderNotification(env, reminder) {
+  let title = String(reminder.title || '').trim();
+  let body = String(reminder.body || '').trim();
+  let source = null;
+  if (reminder.source_type === 'event') {
+    source = await env.DB.prepare(`SELECT title,start_at,location,description FROM events WHERE user_sub=? AND id=?`).bind(reminder.user_sub, reminder.source_id).first();
+    if (source?.title) title = String(source.title).trim();
+    if (source) {
+      const setting = await env.DB.prepare(`SELECT timezone FROM user_settings WHERE user_sub=?`).bind(reminder.user_sub).first();
+      const timezone = setting?.timezone || 'Asia/Taipei';
+      const parts = [];
+      if (source.start_at) parts.push(`時間：${formatPushDateTime(source.start_at, timezone)}`);
+      if (source.location) parts.push(`地點：${source.location}`);
+      if (!source.location && source.description) parts.push(truncate(source.description, 120));
+      body = parts.filter(Boolean).join(' · ') || body || '行程提醒';
+    }
+  } else if (reminder.source_type === 'note') {
+    source = await env.DB.prepare(`SELECT title,content FROM notes WHERE user_sub=? AND id=?`).bind(reminder.user_sub, reminder.source_id).first();
+    if (source?.title) title = String(source.title).trim();
+    if (source?.content) body = truncate(source.content, 150);
+  }
+  return {
+    title: title || (reminder.source_type === 'event' ? '行程提醒' : '備註提醒'),
+    body: body || '提醒時間到了',
+    url: `?open=${encodeURIComponent(reminder.source_type)}&id=${encodeURIComponent(reminder.source_id)}`,
+    tag: `reminder-${reminder.source_type}-${reminder.source_id}`
+  };
+}
+
+function formatPushDateTime(iso, timezone) {
+  try {
+    return new Intl.DateTimeFormat('zh-TW', { timeZone: timezone || 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+  } catch {
+    return new Date(iso).toISOString().slice(5,16).replace('T',' ');
   }
 }
 

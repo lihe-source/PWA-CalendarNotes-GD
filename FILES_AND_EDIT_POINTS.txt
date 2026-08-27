@@ -1,4 +1,4 @@
-CalendarNotesPWA V1.1.1 - 扁平化檔案
+CalendarNotesPWA V1.2.0 - 扁平化檔案
 
 前端 GitHub Pages：
 - index.html
@@ -28,6 +28,7 @@ Cloudflare Worker：
 - README.md
 - DEPLOY_CLOUDFLARE.md
 - FILES_AND_EDIT_POINTS.txt
+- UPDATE_V1_2_0.txt
 
 絕對不要把以下值直接寫進 GitHub：
 - VAPID_PRIVATE_KEY

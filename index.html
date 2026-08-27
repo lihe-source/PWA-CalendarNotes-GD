@@ -32,9 +32,12 @@
           <button id="nextMonthBtn" class="secondary">›</button>
         </div>
         <div class="weekday-row">
-          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+          <span class="week-head">WK</span><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
         </div>
-        <div id="monthGrid" class="month-grid"></div>
+        <div class="calendar-grid-shell">
+          <div id="weekNumbers" class="week-number-col" aria-label="週別"></div>
+          <div id="monthGrid" class="month-grid"></div>
+        </div>
         <div class="panel calendar-day-panel">
           <div class="panel-head"><h3 id="selectedDateLabel">今日事項</h3><button id="addEventBtn" class="primary small">＋ 行程</button></div>
           <div id="dayEvents" class="list"></div>
@@ -58,7 +61,7 @@
             <h2>Google 帳號</h2>
             <p id="googleStatus">尚未登入</p>
             <div class="button-row"><button id="googleLoginBtn" class="primary">登入 / 授權 Google Drive</button><button id="googleLogoutBtn" class="secondary">登出</button></div>
-            <p class="hint">Google 的存取權杖屬短效權杖；到期後需再次由使用者操作授權。</p>
+            <p class="hint">會記住此裝置最近登入的 Google 帳號；重新開啟時會先恢復有效授權，若權杖已到期則自動嘗試無畫面重新授權。Google 要求重新驗證時才需要再次按登入。</p>
           </div>
 
           <div class="panel">

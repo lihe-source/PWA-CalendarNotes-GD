@@ -1,6 +1,6 @@
 {
-  "version": "V1.1.1",
-  "build": 111,
-  "releasedAt": "2026-08-27T21:30:00+08:00",
-  "notes": "New event defaults: reminder set to on-time, start time uses current date/time, and end time defaults to start plus one hour."
+  "version": "V1.2.0",
+  "build": 120,
+  "releasedAt": "2026-08-27T22:30:00+08:00",
+  "notes": "Persistent Google account session, fixed mobile editor, ISO week numbers, stable spillover-date selection, top-left dates, event-title push notifications."
 }

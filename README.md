@@ -1,4 +1,4 @@
-# CalendarNotesPWA V1.1.1
+# CalendarNotesPWA V1.2.0
 
 GitHub Pages + Cloudflare Workers/D1 + Google Drive API 的行事曆、備註、提醒 PWA。
 
@@ -86,9 +86,19 @@ Google OAuth Authorized JavaScript origins 需加入 `http://localhost:8000`。
 - 手機月曆固定在單頁高度，左右滑切換月份。
 
 
-## V1.1.1 行程預設值更新
+## V1.2.0 行程預設值更新
 
 - 新增行程的提醒預設勾選「準時」。
 - 新增行程的開始時間預設為開啟視窗當下時間。
 - 結束時間預設為開始時間 + 1 小時。
 - 新增行程時，若尚未手動修改結束時間，變更開始時間會同步將結束時間調整為 +1 小時。
+
+
+## V1.2.0 重要更新
+- Google 帳號可跨 PWA 關閉/重新開啟保留，並在 token 到期時嘗試 prompt=none 自動重新授權。
+- 手機新增/編輯 Dialog 改成固定容器，中間欄位獨立捲動，不再水平溢出。
+- 月曆左側加入 ISO WK 週別；2026/08/27 = WK35。
+- 點擊跨月灰色日期不再立即切月，避免該週突然跳到第一列。
+- 日期固定左上角。
+- Web Push 事件通知標題改為事件標題。
+- 本版 worker.js 有更新，更新 GitHub Pages 後需再次執行 `npx wrangler deploy`。

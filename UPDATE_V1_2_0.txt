@@ -1,0 +1,41 @@
+CalendarNotesPWA V1.2.0 更新內容
+================================
+
+1. Google 帳號記住登入
+- 將有效的短效 Google access token 與最近使用帳號資訊保存於本機 IndexedDB。
+- PWA 關閉後重新開啟，若 token 仍有效會直接恢復。
+- token 到期時，若已有記住帳號，啟動時自動使用 Google GIS prompt=none 嘗試無畫面重新授權。
+- Google 因安全政策要求重新驗證/同意時，才需要再次按「登入 / 授權 Google Drive」。
+- 按「登出」會撤銷目前 token 並清除本機記住帳號。
+
+2. iPhone / 手機新增行程視窗修正
+- Dialog 本體固定，不再被內容拖動或水平位移。
+- 僅中間欄位區可上下捲動。
+- Header 與儲存/取消按鈕固定在視窗內。
+- datetime-local、附件、提醒等欄位限制在視窗寬度內，避免超出右側。
+
+3. 月曆跨月日期行為
+- 點擊月曆內「下個月/上個月的灰色日期」時，只選取該日期，不再自動切月並重排畫面。
+- 因此原本上一週仍保留在同一視圖。
+- 要切換月份請使用左右箭頭或手機左右滑動。
+
+4. WK 週別
+- 月曆左側新增 ISO 8601 週別欄。
+- 例如 2026/08/27 顯示在 WK35。
+- 選取日期所在的 WK 會高亮。
+
+5. 日期位置
+- 每個日期數字使用 absolute positioning 固定在日期格左上角。
+- 手機及桌面均不再受到 button 內容排版影響而跑回中央。
+
+6. Push 通知標題
+- Cloudflare Worker 在通知送出前會重新讀取事件/備註目前標題。
+- 行程通知的 Notification title 直接使用「事件標題」。
+- 內容則顯示時間、地點或說明。
+- 即使 D1 中存在舊 reminder 資料，也會優先使用目前事件標題。
+
+部署注意：
+- 前端檔案需全部覆蓋 GitHub Pages。
+- 因 worker.js 有修改，本版需要重新執行：npx wrangler deploy
+- D1 schema 沒有修改，不需要重新執行 schema.sql。
+- VAPID / Google OAuth Client ID / D1 database_id 不需重建。
