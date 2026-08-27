@@ -8,7 +8,7 @@ window.APP_CONFIG = {
   API_BASE_URL: 'https://calendar-notes-pwa-api.rexchre.workers.dev',
 
   // Google Cloud Console -> OAuth 2.0 Client ID -> Web application
-  GOOGLE_CLIENT_ID: 'REPLACE_WITH_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
+  GOOGLE_CLIENT_ID: '171837667604-mtcf91qudt6ff79u382v37rjqpp7l51q.apps.googleusercontent.com',
 
   // npm run vapid 產生；Public Key 可放前端，Private Key 只能放 Cloudflare Secret
   VAPID_PUBLIC_KEY: 'BMFfNWY8ljGYAI7f3TU0bQqJfuuzWSW1wRhmf-jJQETX8bM8q5ySxYcCfbI-WVvmDFhFeHvvhCtZGwMOe4JxvIA',
