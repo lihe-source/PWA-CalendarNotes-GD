@@ -1,6 +1,6 @@
 {
-  "version": "V1.2.0",
-  "build": 120,
-  "releasedAt": "2026-08-27T22:30:00+08:00",
-  "notes": "Persistent Google account session, fixed mobile editor, ISO week numbers, stable spillover-date selection, top-left dates, event-title push notifications."
+  "version": "V1.3.0",
+  "build": 130,
+  "releasedAt": "2026-08-27T22:45:00+08:00",
+  "notes": "Calendar chips now stack from the top; added persistent Windows 10, Mac, iOS 26, and yellow-green cartoon UI styles."
 }

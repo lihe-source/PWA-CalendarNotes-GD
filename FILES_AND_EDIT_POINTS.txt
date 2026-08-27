@@ -1,4 +1,4 @@
-CalendarNotesPWA V1.2.0 - 扁平化檔案
+CalendarNotesPWA V1.3.0 - 扁平化檔案
 
 前端 GitHub Pages：
 - index.html

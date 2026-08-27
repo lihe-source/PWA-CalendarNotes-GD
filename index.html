@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#111827">
-  <script>try{document.documentElement.dataset.theme=localStorage.getItem('calendarNotesTheme')||'dark'}catch{document.documentElement.dataset.theme='dark'}</script>
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('calendarNotesTheme')||'dark';document.documentElement.dataset.uiStyle=localStorage.getItem('calendarNotesUiStyle')||'windows10'}catch{document.documentElement.dataset.theme='dark';document.documentElement.dataset.uiStyle='windows10'}</script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="行事曆備註">
@@ -85,7 +85,15 @@
               <button type="button" class="secondary theme-option" data-theme-choice="dark">🌙 黑色介面</button>
               <button type="button" class="secondary theme-option" data-theme-choice="light">☀️ 白色介面</button>
             </div>
-            <p class="hint">主題會記錄在此裝置，下次開啟仍會套用。</p>
+            <label for="uiStyleSelect">介面風格
+              <select id="uiStyleSelect" aria-label="介面風格">
+                <option value="windows10">Windows 10 風格</option>
+                <option value="mac">Mac 風格</option>
+                <option value="ios26">iOS 26 風格</option>
+                <option value="cartoon">卡通風格（黃綠色）</option>
+              </select>
+            </label>
+            <p class="hint">黑／白模式與介面風格會記錄在此裝置，下次開啟會直接套用。</p>
           </div>
 
           <div class="panel">

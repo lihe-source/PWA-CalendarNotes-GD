@@ -88,3 +88,100 @@ dialog{width:min(680px,calc(100% - 20px));max-height:88dvh;overflow:auto;border:
   #editorFields .check-row label{padding:7px 9px}
 }
 @media(min-width:850px){.week-number{min-height:118px;font-size:11px}}
+
+
+/* ===== V1.3.0: top-stacked calendar content + selectable UI styles ===== */
+.day-content{
+  position:absolute;top:29px;left:5px;right:5px;bottom:4px;
+  min-width:0;min-height:0;display:flex;flex-direction:column;
+  align-items:stretch;justify-content:flex-start;gap:3px;
+  overflow:hidden;text-align:left;pointer-events:none;
+}
+.day-content .holiday-chip,.day-content .event-dot,.day-content .more-dot{
+  flex:0 0 auto;margin-top:0!important;min-width:0;text-align:left!important;
+}
+
+/* Shared style tokens */
+:root{
+  --ui-radius-panel:14px;--ui-radius-control:10px;--ui-radius-nav:18px;
+  --ui-shadow:none;--ui-panel-shadow:none;--ui-border-width:1px;
+}
+.panel{border-radius:var(--ui-radius-panel);box-shadow:var(--ui-panel-shadow)}
+button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
+.bottom-nav{border-radius:var(--ui-radius-nav) var(--ui-radius-nav) 0 0}
+
+/* Windows 10: flat, square, Segoe-style */
+:root[data-ui-style="windows10"]{
+  --primary:#0078d4;--ui-radius-panel:2px;--ui-radius-control:2px;--ui-radius-nav:2px;
+  --ui-shadow:none;--ui-panel-shadow:none;
+}
+:root[data-ui-style="windows10"][data-theme="light"]{
+  --bg:#f3f3f3;--panel:#ffffff;--panel2:#f5f5f5;--text:#111111;--muted:#666666;--line:#c8c8c8;--input:#ffffff;
+  --weekend:#ffe8ef;--weekend-muted:#f6e9ed;--today:#fff1a8;--holiday:#107c10;--holiday-text:#ffffff;
+}
+:root[data-ui-style="windows10"][data-theme="dark"]{
+  --bg:#202020;--panel:#2b2b2b;--panel2:#333333;--text:#f5f5f5;--muted:#b8b8b8;--line:#555555;--input:#252525;
+  --weekend:#4b2c38;--weekend-muted:#3b2931;--today:#f2df8d;--holiday:#16a016;--holiday-text:#ffffff;
+}
+:root[data-ui-style="windows10"] body{font-family:"Segoe UI","Noto Sans TC",sans-serif}
+:root[data-ui-style="windows10"] .app-header,:root[data-ui-style="windows10"] .bottom-nav{backdrop-filter:none;-webkit-backdrop-filter:none}
+:root[data-ui-style="windows10"] .fab{border-radius:2px;box-shadow:none;transform:translateY(-10px)}
+:root[data-ui-style="windows10"] .day-cell.selected{outline-color:#0078d4}
+
+/* Mac: softly rounded desktop surfaces */
+:root[data-ui-style="mac"]{
+  --primary:#0a84ff;--ui-radius-panel:16px;--ui-radius-control:9px;--ui-radius-nav:16px;
+  --ui-panel-shadow:0 8px 24px rgba(0,0,0,.10);
+}
+:root[data-ui-style="mac"][data-theme="light"]{
+  --bg:#eef0f3;--panel:rgba(255,255,255,.94);--panel2:#f5f5f7;--text:#1d1d1f;--muted:#6e6e73;--line:#d2d2d7;--input:#ffffff;
+  --weekend:#ffe8ef;--weekend-muted:#f8edf1;--today:#fff2ae;--holiday:#34a853;--holiday-text:#ffffff;
+}
+:root[data-ui-style="mac"][data-theme="dark"]{
+  --bg:#171719;--panel:rgba(38,38,41,.94);--panel2:#303033;--text:#f5f5f7;--muted:#a1a1a6;--line:#4a4a4f;--input:#242427;
+  --weekend:#4b2a38;--weekend-muted:#38262f;--today:#f0dc85;--holiday:#35b85b;--holiday-text:#ffffff;
+}
+:root[data-ui-style="mac"] body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Noto Sans TC",sans-serif}
+:root[data-ui-style="mac"] .app-header,:root[data-ui-style="mac"] .bottom-nav{backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+:root[data-ui-style="mac"] button{box-shadow:0 1px 2px rgba(0,0,0,.05)}
+:root[data-ui-style="mac"] .fab{border-radius:50%;box-shadow:0 10px 28px rgba(0,0,0,.20)}
+
+/* iOS 26-inspired translucent / liquid-glass treatment */
+:root[data-ui-style="ios26"]{
+  --primary:#5aa9ff;--ui-radius-panel:24px;--ui-radius-control:16px;--ui-radius-nav:26px;
+  --ui-panel-shadow:0 12px 38px rgba(0,0,0,.16);
+}
+:root[data-ui-style="ios26"][data-theme="light"]{
+  --bg:#eaf3ff;--panel:rgba(255,255,255,.66);--panel2:rgba(255,255,255,.52);--text:#152238;--muted:#637087;--line:rgba(84,118,164,.25);--input:rgba(255,255,255,.72);
+  --header:rgba(246,250,255,.62);--nav:rgba(246,250,255,.70);--weekend:rgba(255,216,229,.72);--weekend-muted:rgba(245,225,233,.62);--today:#fff1ae;--holiday:#28a745;--holiday-text:#ffffff;
+}
+:root[data-ui-style="ios26"][data-theme="dark"]{
+  --bg:#07101f;--panel:rgba(23,36,59,.68);--panel2:rgba(35,53,82,.58);--text:#f5f8ff;--muted:#a9b5c8;--line:rgba(163,194,235,.22);--input:rgba(11,24,43,.62);
+  --header:rgba(7,16,31,.58);--nav:rgba(7,16,31,.68);--weekend:rgba(91,43,67,.72);--weekend-muted:rgba(61,38,52,.62);--today:#f0dc8b;--holiday:#31b85a;--holiday-text:#ffffff;
+}
+:root[data-ui-style="ios26"] body{background-image:radial-gradient(circle at 18% 0%,rgba(92,164,255,.17),transparent 32%),radial-gradient(circle at 92% 12%,rgba(126,224,255,.13),transparent 28%);background-attachment:fixed}
+:root[data-ui-style="ios26"] .panel,:root[data-ui-style="ios26"] dialog,:root[data-ui-style="ios26"] .app-header,:root[data-ui-style="ios26"] .bottom-nav{backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%)}
+:root[data-ui-style="ios26"] button,:root[data-ui-style="ios26"] input,:root[data-ui-style="ios26"] textarea,:root[data-ui-style="ios26"] select{box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
+:root[data-ui-style="ios26"] .fab{border-radius:50%;box-shadow:0 12px 34px rgba(25,115,230,.30)}
+
+/* Cartoon: warm yellow-green palette, bold outlines, playful rounded surfaces */
+:root[data-ui-style="cartoon"]{
+  --primary:#b7d94b;--ui-radius-panel:18px;--ui-radius-control:14px;--ui-radius-nav:20px;
+  --ui-panel-shadow:3px 4px 0 rgba(75,91,35,.35);
+}
+:root[data-ui-style="cartoon"][data-theme="light"]{
+  --bg:#f1f1b9;--panel:#fff8c8;--panel2:#e6ee9b;--text:#344218;--muted:#687442;--line:#768c3d;--input:#fffde2;--snippet:#4d5c2b;
+  --header:rgba(255,248,200,.95);--nav:rgba(255,248,200,.96);--weekend:#ffd9e4;--weekend-muted:#f2dfd7;--today:#ffe780;--holiday:#5eaa38;--holiday-text:#ffffff;
+}
+:root[data-ui-style="cartoon"][data-theme="dark"]{
+  --bg:#263116;--panel:#35451e;--panel2:#4a5c28;--text:#fffbd2;--muted:#c4cf94;--line:#81964b;--input:#2e3b1a;--snippet:#eef3c7;
+  --header:rgba(38,49,22,.96);--nav:rgba(38,49,22,.97);--weekend:#6b3e50;--weekend-muted:#4c383d;--today:#f0d867;--holiday:#72bf42;--holiday-text:#18310e;
+}
+:root[data-ui-style="cartoon"] body{font-family:"Arial Rounded MT Bold","Trebuchet MS","Noto Sans TC",sans-serif;background-image:radial-gradient(circle at 10% 8%,rgba(255,255,166,.28),transparent 24%),radial-gradient(circle at 86% 18%,rgba(181,218,73,.22),transparent 26%)}
+:root[data-ui-style="cartoon"] .panel,:root[data-ui-style="cartoon"] dialog,:root[data-ui-style="cartoon"] button,:root[data-ui-style="cartoon"] input,:root[data-ui-style="cartoon"] textarea,:root[data-ui-style="cartoon"] select{border-width:2px}
+:root[data-ui-style="cartoon"] .fab{border:2px solid var(--line);box-shadow:3px 5px 0 rgba(75,91,35,.45);border-radius:18px;transform:translateY(-13px)}
+:root[data-ui-style="cartoon"] .holiday-chip{border:1px solid rgba(31,74,16,.35)}
+
+@media(max-width:849px){
+  .day-content{top:21px;left:3px;right:3px;bottom:2px;gap:2px}
+}

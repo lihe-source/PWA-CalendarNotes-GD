@@ -16,6 +16,8 @@ async function boot(){
   $('#appTitle').textContent=cfg.APP_NAME;
   const savedTheme=localStorage.getItem('calendarNotesTheme')||await getMeta('theme','dark');
   applyTheme(savedTheme,false);
+  const savedUiStyle=localStorage.getItem('calendarNotesUiStyle')||await getMeta('uiStyle','windows10');
+  applyUiStyle(savedUiStyle,false);
   bindUi();
   await registerServiceWorker();
   await loadLocal();
@@ -52,6 +54,7 @@ function bindUi(){
   $('#enablePushBtn').onclick=enableNotifications; $('#testPushBtn').onclick=sendTestPush;
   $('#checkUpdateBtn').onclick=()=>checkUpdate(false); $('#forceUpdateBtn').onclick=forceUpdate;
   $$('.theme-option').forEach(b=>b.addEventListener('click',()=>applyTheme(b.dataset.themeChoice,true)));
+  $('#uiStyleSelect')?.addEventListener('change',e=>applyUiStyle(e.target.value,true));
   bindCalendarSwipe();
   $('#timezoneInput').addEventListener('change',async()=>{await setMeta('timezone',$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE);if(getAccessToken()) await saveSettingsRemote()});
 }
@@ -89,6 +92,15 @@ async function applyTheme(theme,persist=true){
   if(persist)await setMeta('theme',value);
 }
 
+async function applyUiStyle(style,persist=true){
+  const allowed=new Set(['windows10','mac','ios26','cartoon']);
+  const value=allowed.has(style)?style:'windows10';
+  document.documentElement.dataset.uiStyle=value;
+  try{localStorage.setItem('calendarNotesUiStyle',value)}catch{}
+  const select=$('#uiStyleSelect');if(select)select.value=value;
+  if(persist)await setMeta('uiStyle',value);
+}
+
 function renderCalendar(){
   const y=state.monthCursor.getFullYear(),m=state.monthCursor.getMonth(); $('#monthLabel').textContent=`${y} 年 ${m+1} 月`;
   const first=new Date(y,m,1); const start=new Date(y,m,1-first.getDay()); const todayKey=dateKey(new Date()); const selectedKey=dateKey(state.selectedDate);
@@ -106,7 +118,9 @@ function renderCalendar(){
     const evs=eventsForDate(key);
     const holidayHtml=holiday?`<span class="holiday-chip" title="${attr(holiday.name)}">${esc(holiday.name)}</span>`:'';
     const eventsHtml=evs.slice(0,3).map(e=>`<span class="event-dot">${esc(e.title)}</span>`).join('');
-    cell.innerHTML=`<span class="day-num">${d.getDate()}</span>${holidayHtml}${eventsHtml}${evs.length>3?`<div class="more-dot">+${evs.length-3}</div>`:''}`;
+    const moreHtml=evs.length>3?`<div class="more-dot">+${evs.length-3}</div>`:'';
+    // 日期固定左上；假日與事件放進獨立內容區，強制從上往下排列，避免 button 內文被瀏覽器垂直置中。
+    cell.innerHTML=`<span class="day-num">${d.getDate()}</span><div class="day-content">${holidayHtml}${eventsHtml}${moreHtml}</div>`;
     // 點選前後月份的灰色日期時只選取日期，不自動重排月份，保留上一週與目前視覺位置。
     cell.onclick=()=>{state.selectedDate=new Date(d);renderCalendar();renderDayEvents()};grid.appendChild(cell);
   }

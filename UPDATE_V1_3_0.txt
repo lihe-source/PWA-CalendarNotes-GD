@@ -1,0 +1,12 @@
+CalendarNotesPWA V1.3.0
+
+本次更新：
+1. 月曆日期格內的國定假日與使用者事件改為固定由上往下排列，不再垂直置中。
+2. 設定 > 介面外觀新增「介面風格」下拉選單：
+   - Windows 10 風格
+   - Mac 風格
+   - iOS 26 風格
+   - 卡通風格（偏黃綠色）
+3. 介面風格使用 localStorage + IndexedDB 保存，重新開啟 PWA 會自動套用。
+4. 原有黑色／白色介面切換保留，能與四種介面風格搭配。
+5. 本版只修改 GitHub Pages 前端，不需重新部署 Cloudflare Worker，也不需修改 D1 Schema。
