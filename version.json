@@ -1,6 +1,6 @@
 {
-  "version": "V1.4.0",
-  "build": 140,
-  "releasedAt": "2026-08-27T23:15:00+08:00",
-  "notes": "Five cartoon color themes, larger mobile day-event panel, stable iOS dialog close layout, and logged-in Google identity card."
+  "version": "V1.5.0",
+  "build": 150,
+  "releasedAt": "2026-08-27T23:40:00+08:00",
+  "notes": "Shared workspace: multiple Google users with access to the same Drive folder share calendar, notes, attachments, sync and reminders."
 }

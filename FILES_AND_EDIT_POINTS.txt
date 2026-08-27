@@ -1,43 +1,15 @@
-CalendarNotesPWA V1.4.0 - 扁平化檔案
+CalendarNotesPWA V1.5.0 - 扁平化檔案
 
-前端 GitHub Pages：
-- index.html
-- style.css
-- app.js
-- api.js
-- db.js
-- google-drive.js
-- push.js
-- holidays.js           <-- 台灣國定假日/補假資料
-- config.js             <-- 已保留目前部署設定；換環境時再修改
-- service-worker.js
-- manifest.json
-- version.json
-- icon-192.png
-- icon-512.png
-- .nojekyll
+主要前端：index.html / app.js / style.css / config.js / service-worker.js
+Cloudflare Worker：worker.js / wrangler.jsonc
+全新 D1：schema.sql
+既有 V1.4.x D1 升級：migrate_v1_5_0.sql（只執行一次）
+Google Drive：google-drive.js
+Web Push：push.js / worker.js
+版本：version.json / config.js
 
-Cloudflare Worker：
-- worker.js
-- schema.sql
-- wrangler.jsonc        <-- 已保留目前部署設定；換 Cloudflare 環境時再修改
-- package.json
-- generate-vapid.mjs
-
-文件：
-- README.md
-- DEPLOY_CLOUDFLARE.md
-- FILES_AND_EDIT_POINTS.txt
-- UPDATE_V1_2_0.txt
-
-絕對不要把以下值直接寫進 GitHub：
-- VAPID_PRIVATE_KEY
-
-Cloudflare secrets：
-- VAPID_PUBLIC_KEY
-- VAPID_PRIVATE_KEY
-
-GitHub 前端可以公開：
-- GOOGLE_CLIENT_ID
-- VAPID_PUBLIC_KEY
-- Worker URL
+V1.5.0 共享模式重點：
+- workspaces + workspace_members
+- events / notes / reminders 以 workspace_id 共享
+- Drive Folder 權限驗證後加入共享工作區
+- 工作區提醒推播到所有已啟用通知的成員

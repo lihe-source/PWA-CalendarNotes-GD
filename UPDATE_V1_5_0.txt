@@ -1,0 +1,38 @@
+CalendarNotesPWA V1.5.0 — 多人共享工作區
+
+【核心變更】
+1. V1.4.x 以前：Cloudflare D1 依 Google user_sub 隔離，每位 Google 使用者看到自己的行程與備註。
+2. V1.5.0：新增 shared-main 共享工作區。已加入同一工作區的 Google 使用者共同讀寫同一份：
+   - 行事曆
+   - 備註 / 待辦
+   - Google Drive 附件
+   - 共享設定（Drive Folder、時區）
+   - Reminder Engine
+3. 事件提醒會推播到共享工作區內「已啟用通知」的所有成員裝置。
+4. Google Drive 共用資料夾同時作為加入資格驗證：
+   - 使用者必須能以自己的 Google 帳號存取該 Folder ID。
+   - 編輯者可共同新增 / 修改 / 上傳附件。
+   - Viewer 權限會以唯讀成員加入。
+5. 第一個共享工作區固定綁定一個 Drive Folder ID；後續成員必須使用同一 Folder ID。
+6. 設定頁新增共享工作區狀態與成員清單。
+
+【既有 V1.4.0 升級：必做】
+A. 先備份目前 D1（建議）。
+B. 在 V1.5.0 資料夾執行一次：
+   npx wrangler d1 execute calendar-notes-pwa-db --remote --file=./migrate_v1_5_0.sql
+C. 再部署 Worker：
+   npx wrangler deploy
+D. 將 V1.5.0 所有前端檔案覆蓋 GitHub Pages repository 根目錄。
+E. 開啟 PWA，確認版本 V1.5.0，登入原本 Google 帳號並同步。
+
+注意：migrate_v1_5_0.sql 是一次性 ALTER TABLE migration；既有資料庫只執行一次。
+全新建立的 D1 請直接執行 schema.sql，不要再執行 migrate_v1_5_0.sql。
+
+【讓第二位使用者加入】
+1. Google Drive 網頁將「同一個共用資料夾」分享給第二位 Google 帳號。
+2. 若要共同編輯 / 上傳，Drive 權限選「編輯者」。
+3. Google Cloud OAuth 若仍為 Testing，將第二位帳號加入 OAuth Test users。
+4. 第二位使用者開啟 PWA → Google 登入。Worker 會自動測試這個帳號是否有共享 Folder 權限；有權限就自動加入，不需要再貼 Folder ID。
+5. 若自動加入失敗，才到「Google Drive 共用資料夾」貼上與第一位完全相同的 URL / Folder ID，按「加入 / 測試並儲存」。
+6. 成功後，兩人會看到同一份行程、備註與成員清單。
+7. 每一台需要接收提醒的裝置，各自按一次「啟用通知」。

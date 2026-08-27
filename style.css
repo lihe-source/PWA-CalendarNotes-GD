@@ -160,3 +160,12 @@ button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
   body:not(.calendar-active) main{min-height:calc(100dvh - 180px);padding-bottom:18px}
   .bottom-nav{min-height:82px}
 }
+
+/* V1.5.0 shared workspace */
+.workspace-status{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--input);line-height:1.55}
+.workspace-members{display:grid;gap:8px;margin-top:10px}
+.workspace-member{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.workspace-member-avatar{display:grid;place-items:center;flex:0 0 36px;width:36px;height:36px;border-radius:50%;background:var(--primary);color:#172033;font-weight:800;border:2px solid var(--line)}
+.workspace-member>span:last-child{display:grid;min-width:0;gap:2px}
+.workspace-member strong,.workspace-member small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace-member small{color:var(--muted);font-size:12px}

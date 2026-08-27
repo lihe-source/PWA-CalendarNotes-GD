@@ -8,9 +8,34 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workspaces (
+  workspace_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '共享行事曆',
+  drive_root_folder_id TEXT NOT NULL DEFAULT '',
+  timezone TEXT NOT NULL DEFAULT 'Asia/Taipei',
+  owner_sub TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workspace_members (
+  workspace_id TEXT NOT NULL,
+  user_sub TEXT NOT NULL,
+  email TEXT DEFAULT '',
+  name TEXT DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'editor',
+  status TEXT NOT NULL DEFAULT 'active',
+  joined_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_verified_at TEXT,
+  PRIMARY KEY (workspace_id, user_sub)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_sub, status);
+
 CREATE TABLE IF NOT EXISTS events (
   id TEXT NOT NULL,
   user_sub TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'shared-main',
   title TEXT NOT NULL,
   description TEXT DEFAULT '',
   location TEXT DEFAULT '',
@@ -29,13 +54,14 @@ CREATE TABLE IF NOT EXISTS events (
   deleted_at TEXT,
   PRIMARY KEY (user_sub, id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_events_user_start ON events(user_sub, start_at);
-CREATE INDEX IF NOT EXISTS idx_events_user_updated ON events(user_sub, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_workspace_id ON events(workspace_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_workspace_start ON events(workspace_id, start_at);
+CREATE INDEX IF NOT EXISTS idx_events_workspace_updated ON events(workspace_id, updated_at);
 
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT NOT NULL,
   user_sub TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'shared-main',
   title TEXT NOT NULL,
   content TEXT DEFAULT '',
   category TEXT DEFAULT '',
@@ -50,13 +76,14 @@ CREATE TABLE IF NOT EXISTS notes (
   deleted_at TEXT,
   PRIMARY KEY (user_sub, id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_notes_user_updated ON notes(user_sub, updated_at);
-CREATE INDEX IF NOT EXISTS idx_notes_user_reminder ON notes(user_sub, reminder_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_workspace_id ON notes(workspace_id, id);
+CREATE INDEX IF NOT EXISTS idx_notes_workspace_updated ON notes(workspace_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_notes_workspace_reminder ON notes(workspace_id, reminder_at);
 
 CREATE TABLE IF NOT EXISTS reminders (
   id TEXT PRIMARY KEY,
   user_sub TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'shared-main',
   source_type TEXT NOT NULL,
   source_id TEXT NOT NULL,
   title TEXT NOT NULL,
@@ -68,9 +95,8 @@ CREATE TABLE IF NOT EXISTS reminders (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-
 CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(cancelled, sent_at, trigger_at);
-CREATE INDEX IF NOT EXISTS idx_reminders_user_source ON reminders(user_sub, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_reminders_workspace_source ON reminders(workspace_id, source_type, source_id);
 
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   endpoint TEXT PRIMARY KEY,
@@ -82,9 +108,9 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   updated_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL
 );
-
 CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_sub);
 
+-- 保留舊版相容；V1.5.0 起真正共享的 Drive root / timezone 以 workspaces 為主。
 CREATE TABLE IF NOT EXISTS user_settings (
   user_sub TEXT PRIMARY KEY,
   drive_root_folder_id TEXT DEFAULT '',

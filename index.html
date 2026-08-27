@@ -70,11 +70,18 @@
           </div>
 
           <div class="panel">
+            <h2>共享工作區</h2>
+            <div id="workspaceStatus" class="workspace-status">登入 Google 後即可加入共享工作區。</div>
+            <div id="workspaceMembers" class="workspace-members"></div>
+            <p class="hint">多人共用方式：先在 Google Drive 將此資料夾分享給其他 Google 帳號。之後該帳號登入本 PWA 時，Cloudflare 會自動驗證 Drive 權限並加入同一共享工作區；不需重新建立資料。建議授予「編輯者」權限，才能共同新增、修改與上傳附件。</p>
+          </div>
+
+          <div class="panel">
             <h2>Google Drive 共用資料夾</h2>
-            <label>共用資料夾 URL 或 Folder ID
+            <label>共用工作區資料夾 URL 或 Folder ID
               <input id="driveFolderInput" placeholder="https://drive.google.com/drive/folders/...">
             </label>
-            <div class="button-row"><button id="verifyDriveBtn" class="primary">測試並儲存</button><button id="backupBtn" class="secondary">立即備份</button><button id="restoreBtn" class="secondary">還原最新備份</button></div>
+            <div class="button-row"><button id="verifyDriveBtn" class="primary">加入 / 測試並儲存</button><button id="backupBtn" class="secondary">立即備份</button><button id="restoreBtn" class="secondary">還原最新備份</button></div>
             <div id="driveStatus" class="hint">尚未設定</div>
           </div>
 

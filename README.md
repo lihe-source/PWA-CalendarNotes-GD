@@ -1,4 +1,19 @@
-# CalendarNotesPWA V1.4.0
+# CalendarNotesPWA V1.5.0
+
+## V1.5.0：多人 Google 帳號共享工作區
+
+本版將原本以 Google `user_sub` 個別隔離的 D1 資料改為 `workspace_id` 共享模式。所有通過同一 Google Drive 共用資料夾權限驗證的成員，可以看到同一份行事曆、備註、附件與提醒。
+
+- 固定工作區：`shared-main`
+- Google Drive Folder ID 是共享工作區識別與權限驗證來源。
+- 第一位使用者 / 舊版擁有者為 owner。
+- Drive 編輯者加入後為 editor；Viewer 為唯讀。
+- 共享事件 Reminder 會傳送給工作區所有已啟用 Push 的成員裝置。
+- V1.4.x 升級請先執行 `migrate_v1_5_0.sql` 一次，再 `npx wrangler deploy`。
+
+詳見 `UPDATE_V1_5_0.txt`。
+
+---
 
 GitHub Pages + Cloudflare Workers/D1 + Google Drive API 的行事曆、備註、提醒 PWA。
 

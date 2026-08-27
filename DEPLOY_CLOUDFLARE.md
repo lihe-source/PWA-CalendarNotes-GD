@@ -1,3 +1,20 @@
+# V1.5.0 既有系統升級（先做這一段）
+
+如果你目前已經是 V1.4.x，**不要重新建立 D1**。在本 V1.5.0 資料夾依序執行：
+
+```cmd
+npx wrangler d1 execute calendar-notes-pwa-db --remote --file=./migrate_v1_5_0.sql
+npx wrangler deploy
+```
+
+`migrate_v1_5_0.sql` 只執行一次。它會加入 `workspaces` / `workspace_members`，並把現有 events / notes / reminders 指向 `shared-main`。
+
+若是全新空白 D1，直接執行 `schema.sql`，不要再執行 migration。
+
+多人加入時，每個 Google 帳號都必須先取得同一個 Google Drive Folder 的分享權限；OAuth 專案若仍在 Testing，也必須把每個帳號加入 Test users。
+
+---
+
 # Cloudflare 部署教學（Windows / Wrangler）
 
 以下流程以 Cloudflare 官方目前推薦的 Wrangler 設定方式為準。

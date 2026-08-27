@@ -6,7 +6,7 @@ import { getTaiwanHoliday } from './holidays.js';
 
 const cfg=window.APP_CONFIG;
 const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
-const state={events:[],notes:[],selectedDate:new Date(),monthCursor:new Date(new Date().getFullYear(),new Date().getMonth(),1),editing:null,driveRoot:'',driveFolders:null,profile:null,lastSync:null,authStatus:'signedOut'};
+const state={events:[],notes:[],selectedDate:new Date(),monthCursor:new Date(new Date().getFullYear(),new Date().getMonth(),1),editing:null,driveRoot:'',driveFolders:null,profile:null,lastSync:null,authStatus:'signedOut',workspace:null,workspaceMembers:[]};
 let tokenClient=null; let toastTimer=null; let tokenRequestMode='manual';
 
 boot().catch(e=>{console.error(e);toast(`啟動失敗：${friendlyError(e)}`)});
@@ -184,8 +184,23 @@ function renderStatusPanels(){
   else if(state.authStatus==='reconnecting'&&state.profile) $('#googleStatus').textContent='正在自動重新連線 Google…';
   else if(state.profile) $('#googleStatus').textContent='帳號已記住；Google 要求重新驗證時才需重新授權';
   else $('#googleStatus').textContent='尚未登入';
+
+  const wsStatus=$('#workspaceStatus'),wsMembers=$('#workspaceMembers');
+  if(state.workspace){
+    const roleLabel={owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace.role]||state.workspace.role;
+    if(wsStatus)wsStatus.innerHTML=`<strong>${esc(state.workspace.name||'共享行事曆')}</strong><br><span class="hint">已加入共享工作區 · ${roleLabel} · ${state.workspaceMembers.length||'—'} 位成員</span>`;
+    if(wsMembers)wsMembers.innerHTML=state.workspaceMembers.length?state.workspaceMembers.map(m=>`<div class="workspace-member"><span class="workspace-member-avatar">${esc((m.name||m.email||'G').trim().charAt(0).toUpperCase())}</span><span><strong>${esc(m.name||m.email||'Google 使用者')}</strong><small>${esc(m.email||'')} · ${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[m.role]||esc(m.role||'')}</small></span></div>`).join(''):'<div class="hint">成員資料同步中…</div>';
+  }else{
+    if(wsStatus)wsStatus.innerHTML=connected?'尚未加入共享工作區。請在下方貼上「所有成員共用」的 Google Drive 資料夾並按「加入 / 測試並儲存」。':'登入 Google 後即可加入共享工作區。';
+    if(wsMembers)wsMembers.innerHTML='';
+  }
   $('#driveStatus').textContent=state.driveRoot?`Folder ID：${state.driveRoot}`:'尚未設定';
   $('#pushStatus').textContent=('Notification'in window)?`通知權限：${Notification.permission}`:'此瀏覽器不支援通知';
+
+  const readOnly=state.workspace?.role==='viewer';
+  ['addEventBtn','addNoteBtn','quickAddBtn','backupBtn','restoreBtn'].forEach(id=>{const el=$(`#${id}`);if(el)el.disabled=!!readOnly});
+  if($('#saveItemBtn'))$('#saveItemBtn').disabled=!!readOnly;
+  if($('#deleteItemBtn'))$('#deleteItemBtn').disabled=!!readOnly;
 }
 
 function openEventEditor(item=null){
@@ -248,6 +263,7 @@ function attachmentsHtml(items){if(!items.length)return '<div class="hint">目�
 
 async function saveEditor(){
   try{
+    if(state.workspace?.role==='viewer')throw new Error('READ_ONLY_MEMBER');
     const ed=state.editing;if(!ed)return;const old=ed.item||{};const title=$('#fTitle').value.trim();if(!title){toast('請輸入標題');return}
     const now=new Date().toISOString();const id=old.id||crypto.randomUUID();let item;
     if(ed.kind==='events'){
@@ -301,25 +317,77 @@ async function autoReconnectGoogle(){
   try{await waitForGoogleIdentity();tokenRequestMode='auto';initTokenClient().requestAccessToken({prompt:'none',login_hint:state.profile.email||''})}catch(e){tokenRequestMode='manual';state.authStatus='remembered';renderStatusPanels();setStatus('Google 帳號已記住；需要時可按登入重新授權')}
 }
 async function afterLogin(showToast=true){
-  try{state.profile=await fetchGoogleProfile();state.authStatus='connected';const saved=await getMeta('googleSession',{});await setMeta('googleSession',{token:getAccessToken(),expiresAt:Number(saved?.expiresAt||Date.now()+50*60*1000),profile:state.profile});renderStatusPanels();setStatus(`Google：${state.profile.email||state.profile.name}`);await syncAll(false);if(state.driveRoot){try{await verifyFolder(state.driveRoot);state.driveFolders=await ensureAppFolders(state.driveRoot);$('#driveStatus').textContent='Google Drive 已連線'}catch(e){$('#driveStatus').textContent=`Drive：${friendlyError(e)}`}}if(showToast)toast('Google 登入成功')}catch(e){console.error(e);if(String(e.message).includes('已失效')||e.status===401||String(e.message).includes('401')){setAccessToken('');state.authStatus=state.profile?'remembered':'signedOut';await setMeta('googleSession',{token:'',expiresAt:0,profile:state.profile||null});renderStatusPanels();setStatus('Google 帳號已記住，但授權已到期');if(showToast)toast('Google 授權已到期，請重新授權');return}if(showToast)toast(`登入後同步失敗：${friendlyError(e)}`)}
+  try{
+    state.profile=await fetchGoogleProfile();state.authStatus='connected';
+    const saved=await getMeta('googleSession',{});await setMeta('googleSession',{token:getAccessToken(),expiresAt:Number(saved?.expiresAt||Date.now()+50*60*1000),profile:state.profile});
+    renderStatusPanels();setStatus(`Google：${state.profile.email||state.profile.name}`);
+    const joined=await ensureWorkspaceConnection(true);
+    if(joined){await syncAll(false);if(state.driveRoot&&state.workspace?.role!=='viewer'){try{await verifyFolder(state.driveRoot);state.driveFolders=await ensureAppFolders(state.driveRoot);$('#driveStatus').textContent='Google Drive 已連線'}catch(e){$('#driveStatus').textContent=`Drive：${friendlyError(e)}`}}}
+    else setStatus('Google 已登入；等待加入共享工作區');
+    if(showToast)toast(joined?'Google 登入成功，已連線共享工作區':'Google 登入成功，請設定共享資料夾');
+  }catch(e){
+    console.error(e);
+    if(String(e.message).includes('已失效')||e.status===401||String(e.message).includes('401')){setAccessToken('');state.authStatus=state.profile?'remembered':'signedOut';await setMeta('googleSession',{token:'',expiresAt:0,profile:state.profile||null});renderStatusPanels();setStatus('Google 帳號已記住，但授權已到期');if(showToast)toast('Google 授權已到期，請重新授權');return}
+    if(showToast)toast(`登入後同步失敗：${friendlyError(e)}`);
+  }
 }
+
+async function ensureWorkspaceConnection(autoJoin=true){
+  if(!getAccessToken())return false;
+  try{
+    let result=await api('/api/workspace/status');
+    if(!result.joined&&autoJoin&&state.driveRoot){
+      result=await api('/api/workspace/join',{method:'POST',body:JSON.stringify({drive_root_folder_id:state.driveRoot})});
+    }
+    if(!result.joined){state.workspace=null;state.workspaceMembers=[];renderStatusPanels();return false}
+    const previousId=await getMeta('workspaceSyncId','');
+    state.workspace=result.workspace||null;
+    if(state.workspace?.drive_root_folder_id){state.driveRoot=state.workspace.drive_root_folder_id;await setMeta('driveRoot',state.driveRoot);$('#driveFolderInput').value=state.driveRoot}
+    if(state.workspace?.timezone){$('#timezoneInput').value=state.workspace.timezone;await setMeta('timezone',state.workspace.timezone)}
+    if(previousId!==state.workspace?.id){state.lastSync='1970-01-01T00:00:00.000Z';await setMeta('lastSync',state.lastSync);await setMeta('workspaceSyncId',state.workspace?.id||'')}
+    await loadWorkspaceMembers();renderStatusPanels();return true;
+  }catch(e){
+    if(e.message==='WORKSPACE_REQUIRED'){state.workspace=null;state.workspaceMembers=[];renderStatusPanels();return false}
+    throw e;
+  }
+}
+
+async function loadWorkspaceMembers(){
+  if(!getAccessToken()||!state.workspace){state.workspaceMembers=[];return}
+  try{const r=await api('/api/workspace/members');state.workspaceMembers=r.members||[]}catch(e){console.warn('workspace members failed',e);state.workspaceMembers=[]}
+}
+
 async function fetchGoogleProfile(){const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${getAccessToken()}`}});if(!r.ok)throw new Error('Google token 已失效');return r.json()}
-async function googleLogout(){const t=getAccessToken();if(t&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(t,()=>{});setAccessToken('');sessionStorage.removeItem('googleToken');await setMeta('googleSession',null);state.profile=null;state.authStatus='signedOut';renderStatusPanels();setStatus('已登出 Google');toast('已登出')}
+async function googleLogout(){const t=getAccessToken();if(t&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(t,()=>{});setAccessToken('');sessionStorage.removeItem('googleToken');await setMeta('googleSession',null);state.profile=null;state.authStatus='signedOut';state.workspace=null;state.workspaceMembers=[];renderStatusPanels();setStatus('已登出 Google');toast('已登出')}
 
 async function syncAll(manual=true){
   if(!getAccessToken()){if(manual)toast('請先登入 Google');return}if(!navigator.onLine){if(manual)toast('目前離線');return}
-  $('#syncBtn').disabled=true;setStatus('同步中…');
+  if(!state.workspace){const joined=await ensureWorkspaceConnection(true);if(!joined){if(manual)toast('請先加入共享工作區');return}}
+  $('#syncBtn').disabled=true;setStatus('同步共享資料中…');
   try{
     await flushQueue();const since=await getMeta('lastSync','1970-01-01T00:00:00.000Z');const data=await api(`/api/sync?since=${encodeURIComponent(since)}`);
     for(const e of data.events||[]){await dbPut('events',e);replaceStateItem('events',e)}for(const n of data.notes||[]){await dbPut('notes',n);replaceStateItem('notes',n)}
-    if(data.settings?.drive_root_folder_id&&!state.driveRoot){state.driveRoot=data.settings.drive_root_folder_id;await setMeta('driveRoot',state.driveRoot);$('#driveFolderInput').value=state.driveRoot}
-    state.lastSync=data.serverTime||new Date().toISOString();await setMeta('lastSync',state.lastSync);renderAll();updateSyncLabel();setStatus('同步完成');if(manual)toast('同步完成');
-  }catch(e){console.error(e);setStatus(`同步失敗：${friendlyError(e)}`);if(manual)toast(`同步失敗：${friendlyError(e)}`)}finally{$('#syncBtn').disabled=false}
+    if(data.workspace)state.workspace=data.workspace;
+    if(data.settings?.drive_root_folder_id){state.driveRoot=data.settings.drive_root_folder_id;await setMeta('driveRoot',state.driveRoot);$('#driveFolderInput').value=state.driveRoot}
+    if(data.settings?.timezone){$('#timezoneInput').value=data.settings.timezone;await setMeta('timezone',data.settings.timezone)}
+    state.lastSync=data.serverTime||new Date().toISOString();await setMeta('lastSync',state.lastSync);await loadWorkspaceMembers();renderAll();updateSyncLabel();setStatus('共享資料同步完成');if(manual)toast('共享資料同步完成');
+  }catch(e){console.error(e);if(e.message==='WORKSPACE_REQUIRED'){state.workspace=null;state.workspaceMembers=[];renderStatusPanels()}setStatus(`同步失敗：${friendlyError(e)}`);if(manual)toast(`同步失敗：${friendlyError(e)}`)}finally{$('#syncBtn').disabled=false}
 }
-async function saveSettingsRemote(){if(!getAccessToken())return;await api('/api/settings',{method:'PUT',body:JSON.stringify({drive_root_folder_id:state.driveRoot||'',timezone:$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE})})}
+async function saveSettingsRemote(){if(!getAccessToken()||!state.workspace)return;await api('/api/settings',{method:'PUT',body:JSON.stringify({drive_root_folder_id:state.driveRoot||'',timezone:$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE})})}
 
 async function verifyAndSaveDrive(){
-  try{if(!getAccessToken())throw new Error('請先登入 Google');const id=extractFolderId($('#driveFolderInput').value);if(!id)throw new Error('無法辨識 Google Drive Folder ID');setStatus('正在檢查 Drive 權限…');const info=await verifyFolder(id);state.driveFolders=await ensureAppFolders(id);state.driveRoot=id;await setMeta('driveRoot',id);await saveSettingsRemote();$('#driveFolderInput').value=id;$('#driveStatus').textContent=`已連線：${info.name} (${id})`;toast('Google Drive 設定完成');setStatus('Google Drive 已連線')}catch(e){console.error(e);$('#driveStatus').textContent=`失敗：${friendlyError(e)}`;toast(`Drive 設定失敗：${friendlyError(e)}`)}
+  try{
+    if(!getAccessToken())throw new Error('請先登入 Google');
+    const id=extractFolderId($('#driveFolderInput').value);if(!id)throw new Error('無法辨識 Google Drive Folder ID');
+    setStatus('正在驗證共享工作區與 Google Drive 權限…');
+    const joined=await api('/api/workspace/join',{method:'POST',body:JSON.stringify({drive_root_folder_id:id})});
+    state.workspace=joined.workspace;state.driveRoot=id;await setMeta('driveRoot',id);$('#driveFolderInput').value=id;
+    if(state.workspace?.role!=='viewer'){const info=await verifyFolder(id);state.driveFolders=await ensureAppFolders(id);$('#driveStatus').textContent=`已連線：${info.name} (${id})`}
+    else{$('#driveStatus').textContent=`已連線共享資料夾（唯讀） (${id})`}
+    state.lastSync='1970-01-01T00:00:00.000Z';await setMeta('lastSync',state.lastSync);await setMeta('workspaceSyncId',state.workspace?.id||'');
+    await loadWorkspaceMembers();renderStatusPanels();await saveSettingsRemote();await syncAll(false);
+    toast(`已加入共享工作區（${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace?.role]||state.workspace?.role}）`);setStatus('共享工作區已連線');
+  }catch(e){console.error(e);$('#driveStatus').textContent=`失敗：${friendlyError(e)}`;toast(`共享工作區設定失敗：${friendlyError(e)}`)}
 }
 async function backupNow(){
   try{if(!getAccessToken())throw new Error('請先登入 Google');if(!state.driveRoot)throw new Error('請先設定 Google Drive 共用資料夾');const folders=state.driveFolders||await ensureAppFolders(state.driveRoot);state.driveFolders=folders;const payload={schema:1,appVersion:cfg.VERSION,createdAt:new Date().toISOString(),timezone:$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE,events:state.events,notes:state.notes,settings:{driveRoot:state.driveRoot}};const stamp=new Date().toISOString().replace(/[:.]/g,'-');await uploadJson(payload,folders.backups.id,`backup-${stamp}.json`);toast('備份已上傳 Google Drive')}catch(e){console.error(e);toast(`備份失敗：${friendlyError(e)}`)}
@@ -390,4 +458,4 @@ function shorten(s,n){s=String(s||'');return s.length>n?s.slice(0,n-1)+'…':s}
 function setStatus(s){$('#statusLine').textContent=s}
 function updateSyncLabel(){$('#lastSync').textContent=state.lastSync?new Date(state.lastSync).toLocaleString('zh-TW'):'—'}
 function toast(s){const t=$('#toast');t.textContent=s;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3200)}
-function friendlyError(e){const m=e?.message||String(e);const map={GOOGLE_LOGIN_REQUIRED:'請先登入 Google',UNAUTHORIZED:'Google 授權已失效，請重新登入',REVISION_CONFLICT:'資料已在其他裝置更新，已保留衝突副本'};return map[m]||m.replace(/^DRIVE_\d+:\s*/,'Google Drive：').slice(0,220)}
+function friendlyError(e){const m=e?.message||String(e);const map={GOOGLE_LOGIN_REQUIRED:'請先登入 Google',UNAUTHORIZED:'Google 授權已失效，請重新登入',REVISION_CONFLICT:'資料已在其他裝置更新，已保留衝突副本',WORKSPACE_REQUIRED:'請先加入共享工作區',WORKSPACE_FOLDER_MISMATCH:'此系統已綁定另一個共享 Google Drive 資料夾，請使用相同的共用資料夾',DRIVE_FOLDER_REQUIRED:'請輸入共享 Google Drive 資料夾',DRIVE_ACCESS_REQUIRED:'目前 Google 帳號沒有這個共享資料夾的存取權限',DRIVE_ACCESS_REVOKED:'此 Google 帳號的共享資料夾權限已被移除',DRIVE_FOLDER_NOT_FOUND:'找不到共享 Google Drive 資料夾',DRIVE_FOLDER_INVALID:'指定位置不是有效的 Google Drive 資料夾',READ_ONLY_MEMBER:'目前帳號是唯讀成員，無法新增、修改或刪除資料'};return map[m]||m.replace(/^DRIVE_\d+:\s*/,'Google Drive：').slice(0,220)}
