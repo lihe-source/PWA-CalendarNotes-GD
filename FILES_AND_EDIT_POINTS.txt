@@ -1,4 +1,4 @@
-CalendarNotesPWA V1.5.0 - 扁平化檔案
+CalendarNotesPWA V1.6.0 - 扁平化檔案
 
 主要前端：index.html / app.js / style.css / config.js / service-worker.js
 Cloudflare Worker：worker.js / wrangler.jsonc
@@ -8,7 +8,13 @@ Google Drive：google-drive.js
 Web Push：push.js / worker.js
 版本：version.json / config.js
 
-V1.5.0 共享模式重點：
+V1.6.0 介面重點：
+- <=767px 手機版：底部導覽、固定月曆工作區
+- 768–1099px 平板版：雙欄內容與置中導覽
+- >=1100px 桌機版：左側導覽 + 月曆/當日事項左右並排
+- 10 款卡通配色主題，全部支援黑/白模式與持久保存
+
+V1.5.0 共享模式仍完整保留：
 - workspaces + workspace_members
 - events / notes / reminders 以 workspace_id 共享
 - Drive Folder 權限驗證後加入共享工作區

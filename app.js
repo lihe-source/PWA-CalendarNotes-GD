@@ -117,7 +117,7 @@ async function applyTheme(theme,persist=true){
 
 async function applyUiStyle(style,persist=true){
   const legacyMap={windows10:'cartoon-lime',mac:'cartoon-lime',ios26:'cartoon-lime',cartoon:'cartoon-lime'};
-  const allowed=new Set(['cartoon-lime','cartoon-sky','cartoon-peach','cartoon-lavender','cartoon-berry']);
+  const allowed=new Set(['cartoon-lime','cartoon-sky','cartoon-peach','cartoon-lavender','cartoon-berry','cartoon-mint','cartoon-lemon','cartoon-coral','cartoon-cocoa','cartoon-night']);
   const migrated=legacyMap[style]||style;
   const value=allowed.has(migrated)?migrated:'cartoon-lime';
   document.documentElement.dataset.uiStyle=value;

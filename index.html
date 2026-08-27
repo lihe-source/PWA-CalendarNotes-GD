@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#111827">
-  <script>try{const t=localStorage.getItem('calendarNotesTheme')||'dark';const raw=localStorage.getItem('calendarNotesUiStyle')||'cartoon-lime';const map={windows10:'cartoon-lime',mac:'cartoon-lime',ios26:'cartoon-lime',cartoon:'cartoon-lime'};const styles=['cartoon-lime','cartoon-sky','cartoon-peach','cartoon-lavender','cartoon-berry'];const u=map[raw]||raw;document.documentElement.dataset.theme=t;document.documentElement.dataset.uiStyle=styles.includes(u)?u:'cartoon-lime'}catch{document.documentElement.dataset.theme='dark';document.documentElement.dataset.uiStyle='cartoon-lime'}</script>
+  <script>try{const t=localStorage.getItem('calendarNotesTheme')||'dark';const raw=localStorage.getItem('calendarNotesUiStyle')||'cartoon-lime';const map={windows10:'cartoon-lime',mac:'cartoon-lime',ios26:'cartoon-lime',cartoon:'cartoon-lime'};const styles=['cartoon-lime','cartoon-sky','cartoon-peach','cartoon-lavender','cartoon-berry','cartoon-mint','cartoon-lemon','cartoon-coral','cartoon-cocoa','cartoon-night'];const u=map[raw]||raw;document.documentElement.dataset.theme=t;document.documentElement.dataset.uiStyle=styles.includes(u)?u:'cartoon-lime'}catch{document.documentElement.dataset.theme='dark';document.documentElement.dataset.uiStyle='cartoon-lime'}</script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="行事曆備註">
@@ -25,22 +25,26 @@
 
     <main id="main">
       <section id="calendarView" class="view active">
-        <div class="toolbar">
-          <button id="prevMonthBtn" class="secondary">‹</button>
-          <button id="todayBtn" class="secondary">今天</button>
-          <h2 id="monthLabel"></h2>
-          <button id="nextMonthBtn" class="secondary">›</button>
-        </div>
-        <div class="weekday-row">
-          <span class="week-head">WK</span><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
-        </div>
-        <div class="calendar-grid-shell">
-          <div id="weekNumbers" class="week-number-col" aria-label="週別"></div>
-          <div id="monthGrid" class="month-grid"></div>
-        </div>
-        <div class="panel calendar-day-panel">
-          <div class="panel-head"><h3 id="selectedDateLabel">今日事項</h3><button id="addEventBtn" class="primary small">＋ 行程</button></div>
-          <div id="dayEvents" class="list"></div>
+        <div class="calendar-main">
+          <div class="calendar-board">
+            <div class="toolbar">
+              <button id="prevMonthBtn" class="secondary" aria-label="上個月">‹</button>
+              <button id="todayBtn" class="secondary">今天</button>
+              <h2 id="monthLabel"></h2>
+              <button id="nextMonthBtn" class="secondary" aria-label="下個月">›</button>
+            </div>
+            <div class="weekday-row">
+              <span class="week-head">WK</span><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+            </div>
+            <div class="calendar-grid-shell">
+              <div id="weekNumbers" class="week-number-col" aria-label="週別"></div>
+              <div id="monthGrid" class="month-grid"></div>
+            </div>
+          </div>
+          <aside class="panel calendar-day-panel" aria-label="選取日期事項">
+            <div class="panel-head"><h3 id="selectedDateLabel">今日事項</h3><button id="addEventBtn" class="primary small">＋ 行程</button></div>
+            <div id="dayEvents" class="list"></div>
+          </aside>
         </div>
       </section>
 
@@ -104,9 +108,14 @@
                 <option value="cartoon-peach">卡通・蜜桃橘</option>
                 <option value="cartoon-lavender">卡通・薰衣草紫</option>
                 <option value="cartoon-berry">卡通・莓果粉</option>
+                <option value="cartoon-mint">卡通・薄荷汽水</option>
+                <option value="cartoon-lemon">卡通・檸檬奶油</option>
+                <option value="cartoon-coral">卡通・珊瑚夕陽</option>
+                <option value="cartoon-cocoa">卡通・焦糖可可</option>
+                <option value="cartoon-night">卡通・星空靛藍</option>
               </select>
             </label>
-            <p class="hint">黑／白模式與卡通配色會記錄在此裝置，下次開啟會直接套用。</p>
+            <p class="hint">黑／白模式與卡通配色會記錄在此裝置，下次開啟會直接套用。程式會依手機、平板與桌機視窗寬度自動切換最適操作版面。</p>
           </div>
 
           <div class="panel">

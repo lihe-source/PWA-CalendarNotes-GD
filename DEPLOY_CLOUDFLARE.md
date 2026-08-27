@@ -1,3 +1,11 @@
+# V1.6.0 更新注意
+
+V1.6.0 只修改前端響應式版面、卡通主題與 Service Worker 版本。若 V1.5.0 的共享 Worker 已經成功部署，這次不需要重新部署 Worker，也不需要再次執行 migration。
+
+若你上一版仍停在 `Could not resolve "@mmmike/web-push/send"`，請先在本資料夾執行 `npm install`，再執行 `npx wrangler deploy` 一次，完成 V1.5.0 共享 Worker 的部署。
+
+---
+
 # V1.5.0 既有系統升級（先做這一段）
 
 如果你目前已經是 V1.4.x，**不要重新建立 D1**。在本 V1.5.0 資料夾依序執行：
