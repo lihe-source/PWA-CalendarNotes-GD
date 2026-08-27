@@ -2,6 +2,7 @@ import { all, put as dbPut, clear as dbClear, setMeta, getMeta } from './db.js';
 import { api, setAccessToken, getAccessToken, saveRemote, deleteRemote, flushQueue } from './api.js';
 import { extractFolderId, verifyFolder, ensureAppFolders, getOrCreateItemFolder, uploadFile, uploadJson, listLatestBackups, downloadJson } from './google-drive.js';
 import { enablePush, testPush } from './push.js';
+import { getTaiwanHoliday } from './holidays.js';
 
 const cfg=window.APP_CONFIG;
 const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
@@ -13,6 +14,8 @@ boot().catch(e=>{console.error(e);toast(`啟動失敗：${friendlyError(e)}`)});
 async function boot(){
   $('#currentVersion').textContent=cfg.VERSION;
   $('#appTitle').textContent=cfg.APP_NAME;
+  const savedTheme=localStorage.getItem('calendarNotesTheme')||await getMeta('theme','dark');
+  applyTheme(savedTheme,false);
   bindUi();
   await registerServiceWorker();
   await loadLocal();
@@ -32,19 +35,23 @@ async function boot(){
 
 function bindUi(){
   $$('.nav-btn').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
-  $('#prevMonthBtn').onclick=()=>{state.monthCursor.setMonth(state.monthCursor.getMonth()-1);renderCalendar()};
-  $('#nextMonthBtn').onclick=()=>{state.monthCursor.setMonth(state.monthCursor.getMonth()+1);renderCalendar()};
+  $('#prevMonthBtn').onclick=()=>changeMonth(-1);
+  $('#nextMonthBtn').onclick=()=>changeMonth(1);
   $('#todayBtn').onclick=()=>{const n=new Date();state.monthCursor=new Date(n.getFullYear(),n.getMonth(),1);state.selectedDate=n;renderCalendar();renderDayEvents()};
   $('#addEventBtn').onclick=()=>openEventEditor(); $('#addNoteBtn').onclick=()=>openNoteEditor();
   $('#quickAddBtn').onclick=()=>$('#quickDialog').showModal(); $('#quickClose').onclick=()=>$('#quickDialog').close();
   $('#quickEvent').onclick=()=>{$('#quickDialog').close();openEventEditor()}; $('#quickNote').onclick=()=>{$('#quickDialog').close();openNoteEditor()};
   $('#saveItemBtn').onclick=saveEditor; $('#deleteItemBtn').onclick=deleteEditorItem;
+  $('#editorCloseBtn').onclick=closeEditor; $('#editorCancelBtn').onclick=closeEditor;
+  $('#editorDialog').addEventListener('cancel',e=>{e.preventDefault();closeEditor()});
   $('#noteSearch').addEventListener('input',renderNotes);
   $('#syncBtn').onclick=()=>syncAll(true);
   $('#googleLoginBtn').onclick=googleLogin; $('#googleLogoutBtn').onclick=googleLogout;
   $('#verifyDriveBtn').onclick=verifyAndSaveDrive; $('#backupBtn').onclick=backupNow; $('#restoreBtn').onclick=restoreLatestBackup;
   $('#enablePushBtn').onclick=enableNotifications; $('#testPushBtn').onclick=sendTestPush;
   $('#checkUpdateBtn').onclick=()=>checkUpdate(false); $('#forceUpdateBtn').onclick=forceUpdate;
+  $$('.theme-option').forEach(b=>b.addEventListener('click',()=>applyTheme(b.dataset.themeChoice,true)));
+  bindCalendarSwipe();
   $('#timezoneInput').addEventListener('change',async()=>{await setMeta('timezone',$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE);if(getAccessToken()) await saveSettingsRemote()});
 }
 
@@ -55,6 +62,30 @@ function renderAll(){renderCalendar();renderDayEvents();renderNotes();renderStat
 function showView(name){
   $$('.view').forEach(v=>v.classList.remove('active')); $(`#${name}View`).classList.add('active');
   $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
+  document.body.classList.toggle('calendar-active',name==='calendar');
+}
+
+
+function changeMonth(delta){
+  const current=state.monthCursor;const target=new Date(current.getFullYear(),current.getMonth()+delta,1);
+  const wantedDay=state.selectedDate.getDate();const maxDay=new Date(target.getFullYear(),target.getMonth()+1,0).getDate();
+  state.monthCursor=target;state.selectedDate=new Date(target.getFullYear(),target.getMonth(),Math.min(wantedDay,maxDay));
+  renderCalendar();renderDayEvents();
+}
+function bindCalendarSwipe(){
+  const el=$('#monthGrid');if(!el)return;let sx=0,sy=0,dx=0,dy=0,tracking=false;
+  el.addEventListener('touchstart',e=>{if(e.touches.length!==1)return;tracking=true;sx=e.touches[0].clientX;sy=e.touches[0].clientY;dx=0;dy=0},{passive:true});
+  el.addEventListener('touchmove',e=>{if(!tracking||e.touches.length!==1)return;dx=e.touches[0].clientX-sx;dy=e.touches[0].clientY-sy;if(Math.abs(dx)>18&&Math.abs(dx)>Math.abs(dy)*1.15)e.preventDefault()},{passive:false});
+  el.addEventListener('touchend',e=>{if(!tracking)return;if(e.changedTouches?.length){dx=e.changedTouches[0].clientX-sx;dy=e.changedTouches[0].clientY-sy}tracking=false;if(Math.abs(dx)>=52&&Math.abs(dx)>Math.abs(dy)*1.25)changeMonth(dx<0?1:-1)},{passive:true});
+  el.addEventListener('touchcancel',()=>{tracking=false},{passive:true});
+}
+function closeEditor(){state.editing=null;const d=$('#editorDialog');if(d.open)d.close()}
+async function applyTheme(theme,persist=true){
+  const value=theme==='light'?'light':'dark';document.documentElement.dataset.theme=value;
+  try{localStorage.setItem('calendarNotesTheme',value)}catch{}
+  const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=value==='light'?'#f7f9fc':'#111827';
+  $$('.theme-option').forEach(b=>b.classList.toggle('active',b.dataset.themeChoice===value));
+  if(persist)await setMeta('theme',value);
 }
 
 function renderCalendar(){
@@ -63,9 +94,18 @@ function renderCalendar(){
   const grid=$('#monthGrid');grid.innerHTML='';
   for(let i=0;i<42;i++){
     const d=new Date(start);d.setDate(start.getDate()+i);const key=dateKey(d);const cell=document.createElement('button');
-    cell.type='button';cell.className='day-cell'; if(d.getMonth()!==m)cell.classList.add('muted');if(key===todayKey)cell.classList.add('today');if(key===selectedKey)cell.classList.add('selected');
-    const evs=eventsForDate(key);cell.innerHTML=`<span class="day-num">${d.getDate()}</span>${evs.slice(0,3).map(e=>`<span class="event-dot">${esc(e.title)}</span>`).join('')}${evs.length>3?`<div class="more-dot">+${evs.length-3}</div>`:''}`;
-    cell.onclick=()=>{state.selectedDate=new Date(d);renderCalendar();renderDayEvents()};grid.appendChild(cell);
+    const weekday=d.getDay(); const holiday=getTaiwanHoliday(key);
+    cell.type='button';cell.className='day-cell';
+    if(d.getMonth()!==m)cell.classList.add('muted');
+    if(weekday===0||weekday===6)cell.classList.add('weekend');
+    if(key===todayKey)cell.classList.add('today');
+    if(key===selectedKey)cell.classList.add('selected');
+    if(holiday)cell.classList.add('holiday');
+    const evs=eventsForDate(key);
+    const holidayHtml=holiday?`<span class="holiday-chip" title="${attr(holiday.name)}">${esc(holiday.name)}</span>`:'';
+    const eventsHtml=evs.slice(0,3).map(e=>`<span class="event-dot">${esc(e.title)}</span>`).join('');
+    cell.innerHTML=`<span class="day-num">${d.getDate()}</span>${holidayHtml}${eventsHtml}${evs.length>3?`<div class="more-dot">+${evs.length-3}</div>`:''}`;
+    cell.onclick=()=>{state.selectedDate=new Date(d);if(d.getMonth()!==m)state.monthCursor=new Date(d.getFullYear(),d.getMonth(),1);renderCalendar();renderDayEvents()};grid.appendChild(cell);
   }
 }
 function renderDayEvents(){
@@ -86,9 +126,14 @@ function renderStatusPanels(){
 }
 
 function openEventEditor(item=null){
-  const now=item?new Date(item.start_at):new Date(state.selectedDate.getFullYear(),state.selectedDate.getMonth(),state.selectedDate.getDate(),9,0);const end=item?.end_at?new Date(item.end_at):new Date(now.getTime()+60*60*1000);state.editing={kind:'events',item:item?structuredClone(item):null};
+  // 新增行程時以「現在」為開始時間；結束時間預設為開始時間 + 1 小時。
+  // 編輯既有行程時則保留原本的開始 / 結束時間。
+  const now=item?new Date(item.start_at):new Date();
+  const end=item?.end_at?new Date(item.end_at):new Date(now.getTime()+60*60*1000);
+  state.editing={kind:'events',item:item?structuredClone(item):null};
   $('#editorTitle').textContent=item?'編輯行程':'新增行程';$('#deleteItemBtn').classList.toggle('hidden',!item);
-  const mins=item?.reminder_minutes||[10];
+  // 新增行程預設勾選「準時」；編輯行程沿用原本設定。
+  const mins=item?.reminder_minutes??[0];
   $('#editorFields').innerHTML=`
     <label>標題<input id="fTitle" value="${attr(item?.title||'')}" required></label>
     <label>開始時間<input id="fStart" type="datetime-local" value="${localInput(now)}"></label>
@@ -102,7 +147,25 @@ function openEventEditor(item=null){
     ${attachmentsHtml(item?.attachment_meta||[])}
     <label>新增照片 / 附件<input id="fFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"></label>
   `;
-  $('#fRepeat').value=item?.repeat_rule||'';$('#editorDialog').showModal();
+  $('#fRepeat').value=item?.repeat_rule||'';
+
+  // 新增行程時，只要尚未手動修改結束時間，變更開始時間就自動把結束時間調成 +1 小時。
+  if(!item){
+    const startInput=$('#fStart');
+    const endInput=$('#fEnd');
+    let autoEnd=true;
+    const syncEnd=()=>{
+      if(!autoEnd||!startInput.value)return;
+      const startDate=new Date(startInput.value);
+      if(Number.isNaN(startDate.getTime()))return;
+      endInput.value=localInput(new Date(startDate.getTime()+60*60*1000));
+    };
+    startInput.addEventListener('input',syncEnd);
+    startInput.addEventListener('change',syncEnd);
+    endInput.addEventListener('input',()=>{autoEnd=false});
+  }
+
+  $('#editorDialog').showModal();
 }
 function openNoteEditor(item=null){
   state.editing={kind:'notes',item:item?structuredClone(item):null};$('#editorTitle').textContent=item?'編輯備註':'新增備註';$('#deleteItemBtn').classList.toggle('hidden',!item);
@@ -204,7 +267,7 @@ async function restoreLatestBackup(){
 async function enableNotifications(){try{if(!getAccessToken())throw new Error('請先登入 Google');await enablePush();renderStatusPanels();toast('通知已啟用')}catch(e){console.error(e);toast(`通知設定失敗：${friendlyError(e)}`)}}
 async function sendTestPush(){try{if(Notification.permission!=='granted')throw new Error('請先啟用通知');const r=await testPush();toast(r.sent?`已送出 ${r.sent} 個測試通知`:'沒有可用的 Push Subscription，請重新啟用通知')}catch(e){toast(`測試通知失敗：${friendlyError(e)}`)}}
 
-async function registerServiceWorker(){if('serviceWorker'in navigator){try{await navigator.serviceWorker.register('./service-worker.js',{scope:'./'});navigator.serviceWorker.addEventListener('message',ev=>{if(ev.data?.type==='SW_UPDATED')toast('新版本已準備完成')})}catch(e){console.warn('SW registration failed',e)}}}
+async function registerServiceWorker(){if('serviceWorker'in navigator){try{await navigator.serviceWorker.register(`./service-worker.js?v=${encodeURIComponent(cfg.VERSION)}`,{scope:'./',updateViaCache:'none'});navigator.serviceWorker.addEventListener('message',ev=>{if(ev.data?.type==='SW_UPDATED')toast('新版本已準備完成')})}catch(e){console.warn('SW registration failed',e)}}}
 async function checkUpdate(silent=false){
   try{
     const res=await fetch(`./version.json?t=${Date.now()}`,{cache:'no-store'});const v=await res.json();$('#latestVersion').textContent=v.version||'未知';
@@ -215,7 +278,18 @@ async function checkUpdate(silent=false){
     }else{sessionStorage.removeItem('updateAttempted');if(!silent)toast('目前已是最新版本')}
   }catch(e){$('#latestVersion').textContent='檢查失敗';if(!silent)toast('版本檢查失敗')}
 }
-async function forceUpdate(){try{if('serviceWorker'in navigator){const regs=await navigator.serviceWorker.getRegistrations();for(const r of regs)await r.update()}if('caches'in window){for(const k of await caches.keys())await caches.delete(k)}location.reload()}catch(e){toast(`更新失敗：${friendlyError(e)}`)}}
+async function forceUpdate(){
+  try{
+    // 只處理本 PWA，避免更新或刪除同一 github.io 網域下其他 PWA 的 Service Worker / Cache。
+    if('caches'in window){const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith('calendar-notes-pwa-')).map(k=>caches.delete(k)))}
+    if('serviceWorker'in navigator){
+      const reg=await navigator.serviceWorker.register(`./service-worker.js?v=${encodeURIComponent(cfg.VERSION)}&t=${Date.now()}`,{scope:'./',updateViaCache:'none'});
+      try{await reg.update()}catch(err){console.warn('Current app SW update skipped',err)}
+    }
+    sessionStorage.removeItem('updateAttempted');
+    const u=new URL(location.href);u.searchParams.set('_refresh',Date.now());location.replace(u.toString());
+  }catch(e){toast(`更新失敗：${friendlyError(e)}`)}
+}
 
 function handleDeepLink(){const u=new URL(location.href);const kind=u.searchParams.get('open'),id=u.searchParams.get('id');if(kind==='event'&&id){const e=state.events.find(x=>x.id===id);if(e)openEventEditor(e)}if(kind==='note'&&id){const n=state.notes.find(x=>x.id===id);if(n){showView('notes');openNoteEditor(n)}}}
 function eventsForDate(key){return state.events.filter(e=>!e.deleted_at&&occursOnDate(e,key))}

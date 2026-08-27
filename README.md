@@ -1,4 +1,4 @@
-# CalendarNotesPWA V1.0.0
+# CalendarNotesPWA V1.1.1
 
 GitHub Pages + Cloudflare Workers/D1 + Google Drive API 的行事曆、備註、提醒 PWA。
 
@@ -73,3 +73,22 @@ Google OAuth Authorized JavaScript origins 需加入 `http://localhost:8000`。
 - Drive 中出現 `CalendarPWA-Data`。
 - 新增一個 2~3 分鐘後的行程，設定「準時」提醒。
 - iPhone/iPad 必須先把網站加入主畫面，再從主畫面 PWA 開啟並按「啟用通知」。
+
+
+## V1.1.0 介面更新
+
+- 月曆日期固定左上角，使用者行程文字靠左。
+- 星期六、日使用粉紅色底；今天整格淡黃色。
+- 2026、2027 台灣政府辦公日曆的國定假日/補假以綠色標籤顯示。
+- 黑色 / 白色介面切換並保留裝置偏好。
+- 修正「清除快取並更新」會碰到同一 github.io 網域其他 PWA Service Worker 的問題。
+- 修正新增行程視窗 X / 取消被 required 欄位驗證擋住。
+- 手機月曆固定在單頁高度，左右滑切換月份。
+
+
+## V1.1.1 行程預設值更新
+
+- 新增行程的提醒預設勾選「準時」。
+- 新增行程的開始時間預設為開啟視窗當下時間。
+- 結束時間預設為開始時間 + 1 小時。
+- 新增行程時，若尚未手動修改結束時間，變更開始時間會同步將結束時間調整為 +1 小時。

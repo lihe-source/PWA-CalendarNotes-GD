@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#111827">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('calendarNotesTheme')||'dark'}catch{document.documentElement.dataset.theme='dark'}</script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="行事曆備註">
@@ -12,7 +13,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="calendar-active">
   <div id="appShell">
     <header class="app-header">
       <div>
@@ -34,7 +35,7 @@
           <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
         </div>
         <div id="monthGrid" class="month-grid"></div>
-        <div class="panel">
+        <div class="panel calendar-day-panel">
           <div class="panel-head"><h3 id="selectedDateLabel">今日事項</h3><button id="addEventBtn" class="primary small">＋ 行程</button></div>
           <div id="dayEvents" class="list"></div>
         </div>
@@ -76,6 +77,15 @@
           </div>
 
           <div class="panel">
+            <h2>介面外觀</h2>
+            <div class="theme-switch" role="group" aria-label="介面主題">
+              <button type="button" class="secondary theme-option" data-theme-choice="dark">🌙 黑色介面</button>
+              <button type="button" class="secondary theme-option" data-theme-choice="light">☀️ 白色介面</button>
+            </div>
+            <p class="hint">主題會記錄在此裝置，下次開啟仍會套用。</p>
+          </div>
+
+          <div class="panel">
             <h2>同步與系統</h2>
             <label>時區<input id="timezoneInput" value="Asia/Taipei"></label>
             <div class="kv"><span>目前版本</span><strong id="currentVersion"></strong></div>
@@ -97,9 +107,9 @@
 
   <dialog id="editorDialog">
     <form method="dialog" id="editorForm">
-      <div class="dialog-head"><h2 id="editorTitle">新增</h2><button value="cancel" class="icon-btn">✕</button></div>
+      <div class="dialog-head"><h2 id="editorTitle">新增</h2><button type="button" id="editorCloseBtn" class="icon-btn" aria-label="關閉">✕</button></div>
       <div id="editorFields"></div>
-      <div class="dialog-actions"><button type="button" id="deleteItemBtn" class="danger hidden">刪除</button><span class="spacer"></span><button value="cancel" class="secondary">取消</button><button type="button" id="saveItemBtn" class="primary">儲存</button></div>
+      <div class="dialog-actions"><button type="button" id="deleteItemBtn" class="danger hidden">刪除</button><span class="spacer"></span><button type="button" id="editorCancelBtn" class="secondary">取消</button><button type="button" id="saveItemBtn" class="primary">儲存</button></div>
     </form>
   </dialog>
 

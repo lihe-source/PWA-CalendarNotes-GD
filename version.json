@@ -1,6 +1,6 @@
 {
-  "version": "V1.0.0",
-  "build": 100,
-  "releasedAt": "2026-08-27T08:30:00+08:00",
-  "notes": "Initial release: calendar, notes, reminders, Google Drive attachments, PWA, D1 sync."
+  "version": "V1.1.1",
+  "build": 111,
+  "releasedAt": "2026-08-27T21:30:00+08:00",
+  "notes": "New event defaults: reminder set to on-time, start time uses current date/time, and end time defaults to start plus one hour."
 }
