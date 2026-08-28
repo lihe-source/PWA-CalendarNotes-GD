@@ -1,4 +1,4 @@
-CalendarNotesPWA V1.6.0 - 扁平化檔案
+CalendarNotesPWA V1.6.1 - 扁平化檔案
 
 主要前端：index.html / app.js / style.css / config.js / service-worker.js
 Cloudflare Worker：worker.js / wrangler.jsonc

@@ -274,3 +274,21 @@ button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
 :root[data-ui-style="cartoon-night"]{--primary:#758cff;--cartoon-shadow:rgba(52,63,133,.42);--cartoon-glow-a:rgba(219,224,255,.36);--cartoon-glow-b:rgba(117,140,255,.24)}
 :root[data-ui-style="cartoon-night"][data-theme="light"]{--bg:#e2e7ff;--panel:#f6f7ff;--panel2:#d0d8ff;--text:#28345f;--muted:#657099;--line:#6d79b6;--input:#fbfbff;--snippet:#46517b;--header:rgba(246,247,255,.96);--nav:rgba(246,247,255,.97);--weekend:#f4d4e5;--weekend-muted:#e3dce7;--today:#ffe889;--holiday:#4d9f70;--holiday-text:#fff}
 :root[data-ui-style="cartoon-night"][data-theme="dark"]{--bg:#171c3b;--panel:#22294e;--panel2:#303967;--text:#f1f3ff;--muted:#b6bde1;--line:#6570a8;--input:#1b2144;--snippet:#d9ddf5;--header:rgba(23,28,59,.96);--nav:rgba(23,28,59,.97);--weekend:#5e3d58;--weekend-muted:#403746;--today:#e7d36f;--holiday:#5db482;--holiday-text:#0d301c}
+
+
+/* ===== V1.6.1: guaranteed 24-hour time selector ===== */
+.datetime24-group{border:0!important;padding:0!important;margin:10px 0 4px!important;min-width:0;max-width:100%}
+.datetime24-group legend{padding:0;margin:0 0 5px;color:var(--snippet);font-size:14px;font-weight:inherit}
+.format-24h{display:inline-flex;align-items:center;justify-content:center;margin-left:5px;padding:1px 6px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.3px;vertical-align:middle}
+.datetime24-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(64px,82px) 12px minmax(64px,82px);gap:7px;align-items:end;min-width:0;max-width:100%}
+.datetime24-row label{margin:0!important;min-width:0!important;overflow:visible!important;color:var(--muted)!important;font-size:11px!important}
+.datetime24-row label>span{display:block;margin:0 0 3px 2px}
+.datetime24-row input,.datetime24-row select{height:46px;min-height:46px!important;margin:0!important;padding:8px 9px!important;font-variant-numeric:tabular-nums}
+.datetime24-time select{text-align:center;text-align-last:center;font-weight:700}
+.datetime24-colon{height:46px;display:flex;align-items:center;justify-content:center;padding-top:15px;color:var(--text);font-size:20px;font-weight:800}
+.datetime24-row select:disabled{opacity:.45}
+@media(max-width:420px){
+  .datetime24-row{grid-template-columns:minmax(0,1fr) 62px 8px 62px;gap:5px}
+  .datetime24-row input,.datetime24-row select{padding-left:6px!important;padding-right:6px!important;font-size:15px}
+  .datetime24-colon{font-size:17px}
+}

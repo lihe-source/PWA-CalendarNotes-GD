@@ -214,8 +214,8 @@ function openEventEditor(item=null){
   const mins=item?.reminder_minutes??[0];
   $('#editorFields').innerHTML=`
     <label>標題<input id="fTitle" value="${attr(item?.title||'')}" required></label>
-    <label>開始時間<input id="fStart" type="datetime-local" value="${localInput(now)}"></label>
-    <label>結束時間<input id="fEnd" type="datetime-local" value="${localInput(end)}"></label>
+    ${dateTime24Html('fStart','開始時間',now)}
+    ${dateTime24Html('fEnd','結束時間',end)}
     <div class="check-row"><label><input id="fAllDay" type="checkbox" ${item?.all_day?'checked':''}>全天</label><label><input id="fCompleted" type="checkbox" ${item?.completed?'checked':''}>已完成</label></div>
     <label>重複<select id="fRepeat"><option value="">不重複</option><option value="daily">每天</option><option value="weekly">每週</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label>
     <label>分類<input id="fCategory" value="${attr(item?.category||'')}"></label>
@@ -227,20 +227,18 @@ function openEventEditor(item=null){
   `;
   $('#fRepeat').value=item?.repeat_rule||'';
 
+  // V1.6.1：所有時間改用 00–23 / 00–59 的自訂 24 小時選擇器，避免 iOS/Chrome 依系統地區切回 AM/PM。
   // 新增行程時，只要尚未手動修改結束時間，變更開始時間就自動把結束時間調成 +1 小時。
   if(!item){
-    const startInput=$('#fStart');
-    const endInput=$('#fEnd');
     let autoEnd=true;
     const syncEnd=()=>{
-      if(!autoEnd||!startInput.value)return;
-      const startDate=new Date(startInput.value);
-      if(Number.isNaN(startDate.getTime()))return;
-      endInput.value=localInput(new Date(startDate.getTime()+60*60*1000));
+      if(!autoEnd)return;
+      const startDate=readDateTime24('fStart');
+      if(!startDate)return;
+      setDateTime24('fEnd',new Date(startDate.getTime()+60*60*1000));
     };
-    startInput.addEventListener('input',syncEnd);
-    startInput.addEventListener('change',syncEnd);
-    endInput.addEventListener('input',()=>{autoEnd=false});
+    bindDateTime24('fStart',syncEnd);
+    bindDateTime24('fEnd',()=>{autoEnd=false});
   }
 
   openAppDialog($('#editorDialog'));
@@ -252,11 +250,12 @@ function openNoteEditor(item=null){
     <label>內容<textarea id="fContent">${esc(item?.content||'')}</textarea></label>
     <label>分類<input id="fCategory" value="${attr(item?.category||'')}"></label>
     <label>標籤（用逗號分隔）<input id="fTags" value="${attr((item?.tags||[]).join(', '))}"></label>
-    <label>提醒時間<input id="fReminderAt" type="datetime-local" value="${item?.reminder_at?localInput(new Date(item.reminder_at)):''}"></label>
+    ${dateTime24Html('fReminderAt','提醒時間',item?.reminder_at?new Date(item.reminder_at):null,{allowEmpty:true,defaultHour:9,defaultMinute:0})}
     <div class="check-row"><label><input id="fPinned" type="checkbox" ${item?.pinned?'checked':''}>置頂</label><label><input id="fCompleted" type="checkbox" ${item?.completed?'checked':''}>已完成</label></div>
     ${attachmentsHtml(item?.attachment_meta||[])}
     <label>新增照片 / 附件<input id="fFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"></label>
   `;
+  bindOptionalDateTime24('fReminderAt');
   openAppDialog($('#editorDialog'));
 }
 function attachmentsHtml(items){if(!items.length)return '<div class="hint">目前沒有附件。</div>';return `<div class="attachment-list">${items.map(a=>`<div class="attachment">${a.mimeType?.startsWith('image/')&&a.thumbnailLink?`<img class="attachment-thumb" src="${attr(a.thumbnailLink)}" alt="">`:'📎'} <a href="${attr(a.webViewLink||'#')}" target="_blank" rel="noopener">${esc(a.name||'附件')}</a><span class="meta">${formatBytes(a.size)}</span></div>`).join('')}</div>`}
@@ -267,10 +266,11 @@ async function saveEditor(){
     const ed=state.editing;if(!ed)return;const old=ed.item||{};const title=$('#fTitle').value.trim();if(!title){toast('請輸入標題');return}
     const now=new Date().toISOString();const id=old.id||crypto.randomUUID();let item;
     if(ed.kind==='events'){
-      const start=$('#fStart').value,end=$('#fEnd').value;if(!start){toast('請設定開始時間');return}
-      item={...old,id,title,description:$('#fDescription').value,location:$('#fLocation').value,start_at:new Date(start).toISOString(),end_at:end?new Date(end).toISOString():null,all_day:$('#fAllDay').checked,category:$('#fCategory').value,color:old.color||'',completed:$('#fCompleted').checked,repeat_rule:$('#fRepeat').value,reminder_minutes:$$('input[name="reminder"]:checked').map(x=>Number(x.value)),attachment_meta:[...(old.attachment_meta||[])],revision:Number(old.revision||0),created_at:old.created_at||now,updated_at:now,deleted_at:null};
+      const start=readDateTime24('fStart'),end=readDateTime24('fEnd');if(!start){toast('請設定開始時間');return}
+      if(end&&end.getTime()<start.getTime()){toast('結束時間不可早於開始時間');return}
+      item={...old,id,title,description:$('#fDescription').value,location:$('#fLocation').value,start_at:start.toISOString(),end_at:end?end.toISOString():null,all_day:$('#fAllDay').checked,category:$('#fCategory').value,color:old.color||'',completed:$('#fCompleted').checked,repeat_rule:$('#fRepeat').value,reminder_minutes:$$('input[name="reminder"]:checked').map(x=>Number(x.value)),attachment_meta:[...(old.attachment_meta||[])],revision:Number(old.revision||0),created_at:old.created_at||now,updated_at:now,deleted_at:null};
     }else{
-      const rem=$('#fReminderAt').value;item={...old,id,title,content:$('#fContent').value,category:$('#fCategory').value,tags:$('#fTags').value.split(',').map(x=>x.trim()).filter(Boolean),pinned:$('#fPinned').checked,completed:$('#fCompleted').checked,reminder_at:rem?new Date(rem).toISOString():null,attachment_meta:[...(old.attachment_meta||[])],revision:Number(old.revision||0),created_at:old.created_at||now,updated_at:now,deleted_at:null};
+      const rem=readDateTime24('fReminderAt',{allowEmpty:true});item={...old,id,title,content:$('#fContent').value,category:$('#fCategory').value,tags:$('#fTags').value.split(',').map(x=>x.trim()).filter(Boolean),pinned:$('#fPinned').checked,completed:$('#fCompleted').checked,reminder_at:rem?rem.toISOString():null,attachment_meta:[...(old.attachment_meta||[])],revision:Number(old.revision||0),created_at:old.created_at||now,updated_at:now,deleted_at:null};
     }
     const files=[...($('#fFiles')?.files||[])];if(files.length){item.attachment_meta.push(...await uploadAttachments(id,files));}
     await dbPut(ed.kind,item);replaceStateItem(ed.kind,item);renderAll();closeAppDialog($('#editorDialog'));toast('已儲存');
@@ -448,9 +448,38 @@ function occursOnDate(e,key){
 function dateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function parseDateKey(k){const [y,m,d]=k.split('-').map(Number);return new Date(y,m-1,d)}
 function isoWeekNumber(d){const x=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=x.getUTCDay()||7;x.setUTCDate(x.getUTCDate()+4-day);const yearStart=new Date(Date.UTC(x.getUTCFullYear(),0,1));return Math.ceil((((x-yearStart)/86400000)+1)/7)}
-function localInput(d){const z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`}
-function formatTime(iso){return new Date(iso).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})}
-function formatDateTime(iso){if(!iso)return'—';return new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}
+function localDateValue(d){const z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`}
+function timeOptionHtml(max,selected){let out='';for(let i=0;i<=max;i++){const v=String(i).padStart(2,'0');out+=`<option value="${v}" ${i===selected?'selected':''}>${v}</option>`}return out}
+function dateTime24Html(prefix,label,date,opts={}){
+  const valid=date instanceof Date&&!Number.isNaN(date.getTime());
+  const allowEmpty=!!opts.allowEmpty;
+  const h=valid?date.getHours():Number(opts.defaultHour??0);
+  const m=valid?date.getMinutes():Number(opts.defaultMinute??0);
+  return `<fieldset class="datetime24-group" data-prefix="${attr(prefix)}"><legend>${esc(label)} <span class="format-24h">24H</span></legend><div class="datetime24-row"><label class="datetime24-date"><span>日期</span><input id="${attr(prefix)}Date" type="date" value="${valid?localDateValue(date):''}" ${allowEmpty?'':'required'}></label><label class="datetime24-time"><span>時</span><select id="${attr(prefix)}Hour" aria-label="${esc(label)} 小時">${timeOptionHtml(23,h)}</select></label><span class="datetime24-colon">:</span><label class="datetime24-time"><span>分</span><select id="${attr(prefix)}Minute" aria-label="${esc(label)} 分鐘">${timeOptionHtml(59,m)}</select></label></div></fieldset>`;
+}
+function readDateTime24(prefix,opts={}){
+  const dateEl=$(`#${prefix}Date`),hourEl=$(`#${prefix}Hour`),minuteEl=$(`#${prefix}Minute`);
+  if(!dateEl||!hourEl||!minuteEl)return null;
+  const date=String(dateEl.value||'').trim();
+  if(!date)return opts.allowEmpty?null:null;
+  const h=Number(hourEl.value),m=Number(minuteEl.value);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isInteger(h)||h<0||h>23||!Number.isInteger(m)||m<0||m>59)return null;
+  const [y,mo,day]=date.split('-').map(Number);const d=new Date(y,mo-1,day,h,m,0,0);
+  if(d.getFullYear()!==y||d.getMonth()!==mo-1||d.getDate()!==day||d.getHours()!==h||d.getMinutes()!==m)return null;
+  return d;
+}
+function setDateTime24(prefix,d){
+  if(!(d instanceof Date)||Number.isNaN(d.getTime()))return;
+  const dateEl=$(`#${prefix}Date`),hourEl=$(`#${prefix}Hour`),minuteEl=$(`#${prefix}Minute`);
+  if(dateEl)dateEl.value=localDateValue(d);if(hourEl)hourEl.value=String(d.getHours()).padStart(2,'0');if(minuteEl)minuteEl.value=String(d.getMinutes()).padStart(2,'0');
+}
+function bindDateTime24(prefix,handler){['Date','Hour','Minute'].forEach(suffix=>{const el=$(`#${prefix}${suffix}`);if(el){el.addEventListener('input',handler);el.addEventListener('change',handler)}})}
+function bindOptionalDateTime24(prefix){
+  const dateEl=$(`#${prefix}Date`),hourEl=$(`#${prefix}Hour`),minuteEl=$(`#${prefix}Minute`);if(!dateEl||!hourEl||!minuteEl)return;
+  const sync=()=>{const disabled=!dateEl.value;hourEl.disabled=disabled;minuteEl.disabled=disabled};dateEl.addEventListener('input',sync);dateEl.addEventListener('change',sync);sync();
+}
+function formatTime(iso){return new Date(iso).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}
+function formatDateTime(iso){if(!iso)return'—';return new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}
 function formatBytes(n){n=Number(n||0);if(!n)return'';if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`}
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function attr(s){return esc(s).replace(/`/g,'&#96;')}
