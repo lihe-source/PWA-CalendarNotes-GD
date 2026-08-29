@@ -292,3 +292,40 @@ button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
   .datetime24-row input,.datetime24-row select{padding-left:6px!important;padding-right:6px!important;font-size:15px}
   .datetime24-colon{font-size:17px}
 }
+
+
+/* ===== V1.6.2: mobile layout refinements ===== */
+.datetime24-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.datetime24-time-row{display:grid;grid-template-columns:minmax(64px,82px) 14px minmax(64px,82px);gap:7px;align-items:end;justify-content:start;min-width:0}
+.datetime24-time-row label{margin:0!important;min-width:0!important;color:var(--muted)!important;font-size:11px!important}
+.datetime24-time-row label>span{display:block;margin:0 0 3px 2px}
+.datetime24-hour select,.datetime24-minute select{text-align:center;text-align-last:center;font-weight:700}
+.datetime24-colon{height:46px;display:flex;align-items:center;justify-content:center;padding-top:15px;color:var(--text);font-size:20px;font-weight:800}
+
+@media(max-width:767px){
+  body.calendar-active .calendar-main{grid-template-rows:minmax(0,1fr) auto!important;gap:6px}
+  body.calendar-active .calendar-day-panel{height:auto!important;min-height:132px;max-height:min(240px,24dvh);padding:8px 9px!important}
+  body.calendar-active .calendar-day-panel #dayEvents{flex:1 1 auto;min-height:0;max-height:calc(min(240px,24dvh) - 56px);overflow:auto;padding-right:2px;align-content:start}
+  body.calendar-active .calendar-day-panel .hint{padding:4px 2px 0}
+  .calendar-day-panel .list-item{padding:10px}
+  .calendar-day-panel .list-item h4{font-size:15px}
+
+  #editorDialog{height:min(calc(100dvh - max(18px,var(--safe-top)) - max(18px,var(--safe-bottom))),860px)!important;max-height:min(calc(100dvh - max(18px,var(--safe-top)) - max(18px,var(--safe-bottom))),860px)!important}
+  #editorFields{padding:4px 12px 14px!important}
+  #editorFields label{overflow:visible!important}
+  #editorFields .check-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #editorFields .check-row label{min-height:50px;align-items:center;justify-content:flex-start}
+  .datetime24-row{grid-template-columns:minmax(0,1fr)!important;gap:9px}
+  .datetime24-date input{width:100%!important}
+  .datetime24-time-row{grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr);width:100%;gap:8px}
+  .datetime24-time-row label>span{text-align:center;margin-left:0}
+  .datetime24-colon{padding-top:16px;font-size:18px}
+  .datetime24-row input,.datetime24-time-row select{height:48px;min-height:48px!important;font-size:16px!important}
+}
+
+@media(max-width:420px){
+  body.calendar-active .calendar-day-panel{max-height:min(220px,22dvh)}
+  body.calendar-active .calendar-day-panel #dayEvents{max-height:calc(min(220px,22dvh) - 56px)}
+  .datetime24-time-row{grid-template-columns:minmax(0,1fr) 12px minmax(0,1fr);gap:6px}
+  .datetime24-colon{font-size:17px}
+}

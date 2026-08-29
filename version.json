@@ -1,6 +1,6 @@
 {
-  "version": "V1.6.1",
-  "build": 161,
-  "releasedAt": "2026-08-28T16:25:00+08:00",
-  "notes": "All event and note reminder time selection now uses a guaranteed 24-hour (00-23) custom picker; displayed times also use 24-hour format."
+  "version": "V1.6.2",
+  "build": 162,
+  "releasedAt": "2026-08-28T17:58:00+08:00",
+  "notes": "Improved mobile layout: fixed overflowing 24-hour selector fields, tightened event detail panel height on the calendar page, and refined dialog spacing to avoid extra blank space."
 }
