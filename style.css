@@ -329,3 +329,63 @@ button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
   .datetime24-time-row{grid-template-columns:minmax(0,1fr) 12px minmax(0,1fr);gap:6px}
   .datetime24-colon{font-size:17px}
 }
+
+
+/* ===== V1.6.3: mobile editor layout refinement ===== */
+#editorDialog form{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%}
+#editorFields{display:flex;flex-direction:column;gap:8px}
+#editorFields > label,
+#editorFields > .check-row,
+#editorFields > .datetime24-group,
+#editorFields > .attachment-list{margin:0!important}
+#editorFields > label > input,
+#editorFields > label > select,
+#editorFields > label > textarea{margin-top:6px}
+#editorFields textarea{min-height:92px}
+#editorDialog .dialog-actions button{min-width:104px}
+
+@media(max-width:767px){
+  #editorDialog{width:calc(100vw - 12px)!important;height:calc(100dvh - max(8px,var(--safe-top)) - max(8px,var(--safe-bottom)))!important;max-height:calc(100dvh - max(8px,var(--safe-top)) - max(8px,var(--safe-bottom)))!important;border-radius:16px!important}
+  #editorDialog .dialog-head{padding:10px 12px 8px!important}
+  #editorDialog .dialog-head h2{font-size:24px;line-height:1.1}
+  #editorFields{padding:6px 12px 10px!important;gap:7px}
+  #editorFields > label{font-size:12px!important}
+  #editorFields > label > input,
+  #editorFields > label > select,
+  #editorFields > label > textarea{min-height:44px!important;padding:9px 11px!important}
+  #editorFields textarea{min-height:86px!important}
+  #editorDialog .dialog-actions{padding:8px 12px calc(8px + var(--safe-bottom))!important;gap:8px}
+  #editorDialog .dialog-actions .spacer{display:none}
+  #editorDialog .dialog-actions button{flex:1 1 0;min-width:0;width:auto;padding:8px 10px}
+  #deleteItemBtn{flex-basis:100%;order:1}
+  #editorCancelBtn{order:2}
+  #saveItemBtn{order:3}
+
+  .datetime24-group{margin:0!important}
+  .datetime24-group legend{margin-bottom:4px;font-size:13px}
+  .datetime24-row{gap:6px!important}
+  .datetime24-date input{height:44px!important;min-height:44px!important}
+  .datetime24-time-row{gap:6px!important}
+  .datetime24-time-row label{font-size:11px!important}
+  .datetime24-time-row label>span{margin:0 0 2px!important;text-align:center}
+  .datetime24-row input, .datetime24-time-row select{height:44px!important;min-height:44px!important;font-size:15px!important;padding:8px 10px!important}
+  .datetime24-colon{height:44px!important;padding-top:14px!important;font-size:16px!important}
+
+  #editorFields .check-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px!important}
+  #editorFields .check-row label{padding:7px 10px!important;min-height:44px!important;font-size:14px}
+
+  body.calendar-active .calendar-main{grid-template-rows:minmax(0,1fr) auto!important;gap:4px}
+  body.calendar-active .calendar-day-panel{min-height:108px!important;max-height:min(180px,18dvh)!important;padding:8px 9px!important;margin-top:0!important}
+  body.calendar-active .calendar-day-panel #dayEvents{max-height:calc(min(180px,18dvh) - 48px)!important}
+  body.calendar-active .calendar-day-panel .panel-head h3{margin-bottom:4px}
+}
+
+@media(max-width:420px){
+  #editorDialog .dialog-head h2{font-size:22px}
+  #editorFields{padding:6px 10px 8px!important}
+  #editorDialog .dialog-actions{padding:8px 10px calc(8px + var(--safe-bottom))!important}
+  .datetime24-time-row{grid-template-columns:minmax(0,1fr) 10px minmax(0,1fr)!important;gap:5px!important}
+  .datetime24-colon{font-size:15px!important}
+  body.calendar-active .calendar-day-panel{max-height:min(165px,17dvh)!important}
+  body.calendar-active .calendar-day-panel #dayEvents{max-height:calc(min(165px,17dvh) - 48px)!important}
+}
