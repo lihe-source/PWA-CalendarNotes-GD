@@ -389,3 +389,51 @@ button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
   body.calendar-active .calendar-day-panel{max-height:min(165px,17dvh)!important}
   body.calendar-active .calendar-day-panel #dayEvents{max-height:calc(min(165px,17dvh) - 48px)!important}
 }
+
+
+/* ===== V1.6.4: tighter mobile event-editor layout ===== */
+@media(max-width:767px){
+  dialog{padding:0!important}
+  #editorDialog{width:calc(100vw - 8px)!important;height:calc(100dvh - max(4px,var(--safe-top)) - max(4px,var(--safe-bottom)))!important;max-height:calc(100dvh - max(4px,var(--safe-top)) - max(4px,var(--safe-bottom)))!important;border-radius:14px!important}
+  #editorDialog form{grid-template-rows:auto minmax(0,1fr) auto!important}
+  #editorDialog .dialog-head{padding:8px 10px 6px!important}
+  #editorDialog .dialog-head h2{font-size:18px!important;line-height:1.1!important}
+  #editorDialog .dialog-head .icon-btn{width:40px!important;min-height:40px!important;font-size:18px!important}
+  #editorFields{padding:4px 10px 8px!important;gap:4px!important}
+  #editorFields > label{font-size:11px!important;margin:0!important}
+  #editorFields > label > input,
+  #editorFields > label > select,
+  #editorFields > label > textarea{margin-top:4px!important;min-height:40px!important;padding:7px 10px!important;font-size:14px!important}
+  #editorFields textarea{min-height:72px!important}
+  #editorDialog .dialog-actions{padding:6px 10px calc(6px + var(--safe-bottom))!important;gap:6px!important}
+  #editorDialog .dialog-actions button{min-height:40px!important;font-size:14px!important;padding:6px 10px!important;border-radius:10px!important}
+
+  .datetime24-group legend{font-size:12px!important;margin:0 0 2px!important}
+  .format-24h{font-size:11px!important;padding:1px 6px!important}
+  .datetime24-row{gap:4px!important}
+  .datetime24-date span,.datetime24-time-row label>span{font-size:11px!important;line-height:1.1!important}
+  .datetime24-date input{height:40px!important;min-height:40px!important;padding:7px 10px!important;font-size:14px!important}
+  .datetime24-time-row{gap:4px!important}
+  .datetime24-row input, .datetime24-time-row select{height:40px!important;min-height:40px!important;font-size:14px!important;padding:6px 8px!important}
+  .datetime24-colon{height:40px!important;padding-top:12px!important;font-size:14px!important}
+
+  #editorFields .check-row{gap:6px!important}
+  #editorFields .check-row label{min-height:40px!important;padding:6px 9px!important;font-size:14px!important}
+  #editorFields input[type="checkbox"]{transform:scale(.95)}
+
+  body.calendar-active .calendar-day-panel{min-height:96px!important;max-height:min(150px,15dvh)!important;padding:7px 8px!important}
+  body.calendar-active .calendar-day-panel #dayEvents{max-height:calc(min(150px,15dvh) - 42px)!important}
+  .calendar-day-panel .panel-head h3{font-size:13px!important}
+  .calendar-day-panel .small{min-height:32px!important;padding:4px 8px!important;font-size:12px!important}
+}
+
+@media(max-width:420px){
+  #editorDialog .dialog-head h2{font-size:17px!important}
+  #editorFields{padding:4px 8px 6px!important}
+  #editorDialog .dialog-actions{padding:6px 8px calc(6px + var(--safe-bottom))!important}
+  #editorFields > label > input,
+  #editorFields > label > select,
+  #editorFields > label > textarea,
+  .datetime24-date input,
+  .datetime24-row input, .datetime24-time-row select{font-size:13px!important}
+}
