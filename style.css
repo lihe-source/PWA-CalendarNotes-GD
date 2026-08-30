@@ -467,3 +467,29 @@ button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
   #editorFields .datetime24-time-row{grid-template-columns:minmax(0,1fr) 8px minmax(0,1fr)!important;gap:3px!important}
   #editorFields .datetime24-colon{width:8px!important;min-width:8px!important;max-width:8px!important;font-size:13px!important}
 }
+
+
+/* ===== V1.6.6: rebuild 24H date/time editor layout ===== */
+.dt24-block{display:grid;gap:6px;min-width:0;max-width:100%;margin:6px 0 2px}
+.dt24-title{color:var(--snippet);font-size:14px;display:flex;align-items:center;gap:6px;font-weight:600}
+.dt24-date-field,.dt24-time-field{display:grid;gap:4px;min-width:0;max-width:100%}
+.dt24-label{display:block!important;margin:0!important;color:var(--muted)!important;font-size:12px!important;line-height:1.2!important;white-space:nowrap}
+.dt24-input,.dt24-select{display:block;width:100%!important;max-width:100%!important;min-width:0!important;height:44px;min-height:44px!important;border:1px solid var(--line);border-radius:10px;background:var(--input);color:var(--text);padding:8px 10px;font-variant-numeric:tabular-nums;box-sizing:border-box}
+.dt24-select{text-align:center;text-align-last:center;font-weight:700}
+.dt24-time-row{display:grid;grid-template-columns:minmax(0,1fr) 12px minmax(0,1fr);gap:6px;align-items:end;min-width:0;max-width:100%}
+.dt24-colon{display:flex;align-items:center;justify-content:center;height:44px;padding-top:16px;color:var(--text);font-size:18px;font-weight:800;box-sizing:border-box}
+
+@media(max-width:767px){
+  .dt24-block{gap:5px;margin:4px 0 2px}
+  .dt24-title{font-size:13px}
+  .dt24-label{font-size:11px!important}
+  .dt24-input,.dt24-select{height:40px;min-height:40px!important;padding:7px 9px;font-size:14px!important;border-radius:10px}
+  .dt24-time-row{grid-template-columns:minmax(0,1fr) 10px minmax(0,1fr);gap:4px}
+  .dt24-colon{height:40px;padding-top:12px;font-size:15px}
+  #editorFields .dt24-block,#editorFields .dt24-date-field,#editorFields .dt24-time-row,#editorFields .dt24-time-field{overflow:visible!important}
+}
+@media(max-width:420px){
+  .dt24-input,.dt24-select{font-size:13px!important;padding:6px 8px}
+  .dt24-time-row{grid-template-columns:minmax(0,1fr) 8px minmax(0,1fr);gap:3px}
+  .dt24-colon{font-size:14px;width:8px;max-width:8px;min-width:8px}
+}

@@ -1,6 +1,6 @@
 {
-  "version": "V1.6.5",
-  "build": 165,
-  "releasedAt": "2026-08-30T22:35:00+08:00",
-  "notes": "Fixed the remaining iPhone mobile overflow issue where date/time field boxes could extend beyond the dialog edge."
+  "version": "V1.6.6",
+  "build": 166,
+  "releasedAt": "2026-08-31T11:10:00+08:00",
+  "notes": "Rebuilt the mobile 24-hour date/time editor layout to resolve missing time selectors and overflow issues on iPhone."
 }
