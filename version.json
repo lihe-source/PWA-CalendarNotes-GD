@@ -1,6 +1,6 @@
 {
-  "version": "V1.6.4",
-  "build": 164,
-  "releasedAt": "2026-08-30T21:20:00+08:00",
-  "notes": "Further tightened the mobile event editor layout by reducing header, input, and action-bar sizes and by shrinking the calendar day panel blank space."
+  "version": "V1.6.5",
+  "build": 165,
+  "releasedAt": "2026-08-30T22:35:00+08:00",
+  "notes": "Fixed the remaining iPhone mobile overflow issue where date/time field boxes could extend beyond the dialog edge."
 }

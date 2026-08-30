@@ -437,3 +437,33 @@ button,.search,input,textarea,select{border-radius:var(--ui-radius-control)}
   .datetime24-date input,
   .datetime24-row input, .datetime24-time-row select{font-size:13px!important}
 }
+
+
+/* ===== V1.6.5: fix mobile date/time field overflow ===== */
+#editorDialog{overflow:hidden!important}
+#editorFields .datetime24-group,
+#editorFields .datetime24-row,
+#editorFields .datetime24-date,
+#editorFields .datetime24-time-row,
+#editorFields .datetime24-hour,
+#editorFields .datetime24-minute{min-width:0!important;max-width:100%!important;width:100%!important;overflow:hidden!important}
+#editorFields .datetime24-date input,
+#editorFields .datetime24-hour select,
+#editorFields .datetime24-minute select{display:block!important;min-width:0!important;max-width:100%!important;width:100%!important}
+
+@media(max-width:767px){
+  #editorFields{padding-right:8px!important;padding-left:8px!important;overflow-x:hidden!important}
+  #editorFields .datetime24-row{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:4px!important;width:100%!important;max-width:100%!important}
+  #editorFields .datetime24-date{display:block!important;width:100%!important;max-width:100%!important;overflow:hidden!important}
+  #editorFields .datetime24-date input{width:100%!important;max-width:100%!important;min-width:0!important}
+  #editorFields .datetime24-time-row{display:grid!important;grid-template-columns:minmax(0,1fr) 10px minmax(0,1fr)!important;align-items:end!important;gap:4px!important;width:100%!important;max-width:100%!important;overflow:hidden!important}
+  #editorFields .datetime24-hour,
+  #editorFields .datetime24-minute{display:block!important;width:100%!important;max-width:100%!important;min-width:0!important;overflow:hidden!important}
+  #editorFields .datetime24-colon{width:10px!important;min-width:10px!important;max-width:10px!important;padding-top:12px!important;overflow:hidden!important}
+}
+
+@media(max-width:420px){
+  #editorFields{padding-right:6px!important;padding-left:6px!important}
+  #editorFields .datetime24-time-row{grid-template-columns:minmax(0,1fr) 8px minmax(0,1fr)!important;gap:3px!important}
+  #editorFields .datetime24-colon{width:8px!important;min-width:8px!important;max-width:8px!important;font-size:13px!important}
+}
