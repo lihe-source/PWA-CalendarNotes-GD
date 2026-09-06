@@ -1,73 +1,43 @@
-import { enqueue, listQueue, removeQueue, put as dbPut } from './db.js';
-
-const cfg = window.APP_CONFIG;
-let accessToken = '';
-export function setAccessToken(token){accessToken=token||'';}
-export function getAccessToken(){return accessToken;}
-
-export async function api(path, options={}){
-  if (!accessToken) throw new Error('GOOGLE_LOGIN_REQUIRED');
-  const url = `${cfg.API_BASE_URL.replace(/\/$/,'')}${path}`;
-  const res = await fetch(url,{
-    ...options,
-    headers:{'Content-Type':'application/json','Authorization':`Bearer ${accessToken}`,...(options.headers||{})}
+import {stage,listQueue,acknowledge,retainConflict,markQueueError,getScope} from './db.js';
+const cfg=window.APP_CONFIG;
+let accessToken='',sessionToken='',refreshHook=null,flushPromise=null;
+export const setAccessToken=t=>{accessToken=t||''};
+export const getAccessToken=()=>accessToken;
+export const setSessionToken=t=>{sessionToken=t||''};
+export const getSessionToken=()=>sessionToken;
+export const setRefreshHook=fn=>{refreshHook=fn};
+export async function ensureToken(){if(refreshHook)await refreshHook();if(!accessToken&&!sessionToken)throw new Error('GOOGLE_LOGIN_REQUIRED');return accessToken;}
+export async function api(path,options={}){
+  await ensureToken();
+  const scope=getScope();
+  const res=await fetch(`${cfg.API_BASE_URL.replace(/\/$/,'')}${path}`,{
+    ...options,signal:options.signal||AbortSignal.timeout(path==='/api/restore'?120000:20000),
+    headers:{'Content-Type':'application/json',Authorization:`Bearer ${sessionToken||accessToken}`,...options.headers}
   });
-  const data = await res.json().catch(()=>({}));
-  if (!res.ok){
-    const e=new Error(data.error||`HTTP_${res.status}`); e.status=res.status; e.data=data; throw e;
-  }
-  return data;
+  const data=await res.json().catch(()=>({}));
+  if(scope!==getScope())throw new Error('ACCOUNT_CHANGED');
+  if(!res.ok){const e=new Error(data.error||`HTTP_${res.status}`);e.status=res.status;e.data=data;throw e;}return data;
 }
-
-export async function saveRemote(kind,item,{queueOnOffline=true}={}){
-  if(!accessToken){if(queueOnOffline)await enqueue({action:'put',kind,item});return item;}
-  try{
-    const data=await api(`/api/${kind}/${encodeURIComponent(item.id)}`,{method:'PUT',body:JSON.stringify({...item,base_revision:Number(item.revision||0)})});
-    await dbPut(kind,data.item);
-    return data.item;
-  }catch(e){
-    if (!navigator.onLine || e.name==='TypeError'){
-      if(queueOnOffline)await enqueue({action:'put',kind,item}); return item;
-    }
-    if (e.status===409 && e.data?.server){
-      // 保留伺服器版本，同時建立本機衝突副本，避免使用者內容被覆蓋。
-      await dbPut(kind,e.data.server);
-      const copy={...item,id:`${item.id}-conflict-${Date.now()}`,title:`${item.title}（衝突副本）`,revision:0,created_at:new Date().toISOString(),updated_at:new Date().toISOString()};
-      await enqueue({action:'put',kind,item:copy});
-      await dbPut(kind,copy);
-      return e.data.server;
-    }
-    throw e;
-  }
-}
-
-export async function deleteRemote(kind,item,{queueOnOffline=true}={}){
-  if(!accessToken){const tomb={...item,deleted_at:new Date().toISOString(),updated_at:new Date().toISOString()};await dbPut(kind,tomb);if(queueOnOffline)await enqueue({action:'delete',kind,item:tomb});return tomb;}
-  try{
-    const data=await api(`/api/${kind}/${encodeURIComponent(item.id)}`,{method:'DELETE',body:JSON.stringify({base_revision:Number(item.revision||0)})});
-    await dbPut(kind,data.item||{...item,deleted_at:new Date().toISOString()});
-    return data.item;
-  }catch(e){
-    if (!navigator.onLine || e.name==='TypeError'){
-      const tomb={...item,deleted_at:new Date().toISOString(),updated_at:new Date().toISOString()};
-      await dbPut(kind,tomb); if(queueOnOffline)await enqueue({action:'delete',kind,item:tomb}); return tomb;
-    }
-    throw e;
-  }
-}
-
+export async function saveRemote(kind,item){const local=await stage(kind,item,'put');return local;}
+export async function deleteRemote(kind,item){const local={...item,deleted_at:new Date().toISOString(),updated_at:new Date().toISOString()};return stage(kind,local,'delete');}
 export async function flushQueue(){
-  if (!accessToken || !navigator.onLine) return {done:0};
-  const q=await listQueue(); let done=0;
-  for (const op of q.sort((a,b)=>a.queued_at.localeCompare(b.queued_at))){
+  if(flushPromise)return flushPromise;
+  flushPromise=flush().finally(()=>{flushPromise=null});return flushPromise;
+}
+async function flush(){
+  if((!accessToken&&!sessionToken)||!navigator.onLine)return {done:0,pending:(await listQueue()).length};
+  let done=0,conflicts=0;const scope=getScope();
+  for(const op of (await listQueue()).sort((a,b)=>a.queued_at.localeCompare(b.queued_at))){
+    if(op.scope!==scope||getScope()!==scope)throw new Error('ACCOUNT_CHANGED');
+    if(op.error?.startsWith('刪除衝突')){conflicts++;continue;}
     try{
-      if (op.action==='put') await saveRemote(op.kind,op.item,{queueOnOffline:false});
-      else if (op.action==='delete') await deleteRemote(op.kind,op.item,{queueOnOffline:false});
-      await removeQueue(op.qid); done++;
+      const data=await api(`/api/${op.kind}/${encodeURIComponent(op.item.id)}`,{method:op.action==='delete'?'DELETE':'PUT',body:JSON.stringify({...op.item,base_revision:Number(op.item.revision||0),mutation_id:op.generation})});
+      if(!data.ok)throw new Error('未收到伺服器確認');
+      await acknowledge(op,data.item||{...op.item,deleted_at:op.item.deleted_at||new Date().toISOString()});done++;
     }catch(e){
-      if (e.status===401) break;
-      console.warn('queue item failed',op,e);
+      if(e.status===409&&e.data?.server){await retainConflict(op,e.data.server);conflicts++;continue;}
+      await markQueueError(op,e.message);throw e;
     }
   }
-  return {done};
+  return {done,conflicts,pending:(await listQueue()).length};
 }

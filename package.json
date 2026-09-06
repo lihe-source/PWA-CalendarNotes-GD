@@ -1,6 +1,6 @@
 {
   "name": "calendar-notes-pwa-cloudflare",
-  "version": "1.6.1",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,10 @@
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create calendar-notes-pwa-db --location apac",
     "db:init": "wrangler d1 execute calendar-notes-pwa-db --remote --file=schema.sql",
-    "vapid": "node generate-vapid.mjs"
+    "vapid": "node generate-vapid.mjs",
+    "db:upgrade": "wrangler d1 execute calendar-notes-pwa-db --remote --file=migrate_v2_0_0.sql",
+    "auth:key": "node generate-auth-key.mjs",
+    "release": "node release.mjs"
   },
   "dependencies": {
     "@mmmike/web-push": "^1.3.0"

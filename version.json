@@ -1,6 +1,24 @@
 {
-  "version": "V1.6.6",
-  "build": 166,
-  "releasedAt": "2026-08-31T11:10:00+08:00",
-  "notes": "Rebuilt the mobile 24-hour date/time editor layout to resolve missing time selectors and overflow issues on iPhone."
+  "version": "V2.0.0",
+  "build": 200,
+  "releasedAt": "2026-09-06T20:00:00+08:00",
+  "notes": "全新 UI、帳號隔離、可靠同步、原子還原與提醒重試。",
+  "assets": {
+    "./": "dc85b3349c54348cb342c5716fdde9b8a1534f59843573f8fef4c85e54ee24d5",
+    "./index.html": "dc85b3349c54348cb342c5716fdde9b8a1534f59843573f8fef4c85e54ee24d5",
+    "./style.css": "3e1769612dd5c4994cbcbf75d39c9b3a392b715f979d2e64baa9fc6144d34181",
+    "./config.js": "1c85f4825771a6f4c84ff088dd4f25a25e664fc13c717dd59e3bf59d98e8f93e",
+    "./app.js": "e49d445e62d9c3da8814280560a24410541d3ab7243d3e082051ae397d485162",
+    "./db.js": "0cf4ea67c69139c8ea87a20092c733c99ed9a793539c64871a8ee4876e19c154",
+    "./api.js": "85f1ab937ee340b5d686d60025035f9b41abd6e5cf3f6637f6188b8e2cc76c0b",
+    "./auth.js": "f392ce27dfd41b2d9892a8536928ade0c020bd19276f9891c70a188bbcdb4eca",
+    "./recurrence.js": "1239fdc7aa2bca5bfad036c99c582824be5eb3f973913ca4f91763bb06d3080e",
+    "./google-drive.js": "6de794bb6bcd4c87974b2198c6bcec5d6e25efa3afcc114d4c5365f8332beef7",
+    "./push.js": "c5442b4e6280baf82b3cf3e35b0f9d8bcb0236899b8cf87be3307c511acd409b",
+    "./holidays.js": "09c34397f91272eae30f0712e66f0f9364776c343cc55d6a72d723111709345c",
+    "./manifest.json": "65788f1c6c13a41eb558d9e57dc312c490cea43dc08df2adddd19d51935fec0c",
+    "./icon-192.png": "30efc5a83b36f00b3aa361f89decbd789ee9c37f22eb848bf49a9d223cea20db",
+    "./icon-512.png": "cf36c9c2a6e54b835a256398e81dbc8837f280e82e6dcbb3eb9e99b817b089c2",
+    "./apple-touch-icon.png": "7094246e06848ed215cee4839a67b236e9486966ecc39ba16a9887153d51f94d"
+  }
 }

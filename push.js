@@ -1,19 +1,6 @@
-import { api } from './api.js';
-const cfg=window.APP_CONFIG;
-
-function urlBase64ToUint8Array(base64String){
-  const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
-}
-export async function enablePush(){
-  if(!('serviceWorker'in navigator)||!('PushManager'in window))throw new Error('此瀏覽器不支援 Web Push');
-  const perm=await Notification.requestPermission();if(perm!=='granted')throw new Error('通知權限未允許');
-  const reg=await navigator.serviceWorker.ready;
-  let sub=await reg.pushManager.getSubscription();
-  if(!sub){
-    if(!cfg.VAPID_PUBLIC_KEY||cfg.VAPID_PUBLIC_KEY.startsWith('REPLACE_'))throw new Error('尚未設定 VAPID_PUBLIC_KEY');
-    sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(cfg.VAPID_PUBLIC_KEY)});
-  }
-  await api('/api/push/subscribe',{method:'POST',body:JSON.stringify({subscription:sub.toJSON(),device_name:navigator.userAgent.slice(0,180)})});
-  return sub;
-}
-export async function testPush(){return api('/api/push/test',{method:'POST',body:'{}'});}
+import {api} from './api.js';
+function bytes(s){const raw=atob((s+'='.repeat((4-s.length%4)%4)).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(raw,c=>c.charCodeAt(0))}
+export async function subscriptionState(){const supported='serviceWorker'in navigator&&'PushManager'in window&&'Notification'in window;if(!supported)return {supported:false,permission:'default',subscription:null};const registration=await navigator.serviceWorker.getRegistration(new URL('./',location.href).href);return {supported:true,permission:Notification.permission,subscription:registration?await registration.pushManager.getSubscription():null};}
+export async function enablePush({requestPermission=true}={}){if(!('Notification'in window)||!('PushManager'in window))throw new Error('請先將 App 加入主畫面，再由主畫面啟用通知。');const permission=requestPermission?await Notification.requestPermission():Notification.permission;if(permission!=='granted')throw new Error('通知尚未允許，請至瀏覽器／系統設定調整。');const reg=await navigator.serviceWorker.ready;let sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes(window.APP_CONFIG.VAPID_PUBLIC_KEY)});await api('/api/push/subscribe',{method:'POST',body:JSON.stringify({subscription:sub.toJSON(),device_name:navigator.userAgent.slice(0,180)})});return sub;}
+export async function disconnectPush(){const {subscription}=await subscriptionState();if(subscription){try{await api('/api/push/unsubscribe',{method:'POST',body:JSON.stringify({endpoint:subscription.endpoint})})}finally{await subscription.unsubscribe()}}}
+export async function testPush(){const {subscription}=await subscriptionState();if(!subscription)throw new Error('請先在此裝置啟用通知');return api('/api/push/test',{method:'POST',body:JSON.stringify({endpoint:subscription.endpoint})});}

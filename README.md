@@ -1,156 +1,60 @@
-# CalendarNotesPWA_V1_6_3
+# 行事曆・備註 V2.0.0
 
-本版重點：
-- 進一步優化手機版新增/編輯行程視窗排版。
-- 縮減欄位與按鈕區高度，讓小螢幕更容易看到完整內容。
-- 再調整月曆頁下方當日事項面板高度，減少底部大空白。
+這是依確認的「深石墨＋薄荷青」設計製作的完整升級版。部署方式仍為 GitHub Pages 前端＋Cloudflare Worker/D1＋Google Drive 附件與備份。
 
-# CalendarNotesPWA_V1_6_2
+## 先看這裡
 
-本版重點：
-- 修正手機版新增 / 編輯行程視窗的 24 小時時間選擇器排版，避免日期欄位與時分選擇框互相擠壓。
-- 調整手機版月曆頁下方「當日事項」面板高度，減少空白並保留可捲動檢視多筆事項。
-- 修正對話框關閉後常見的下方多餘空白感，優化內部留白與欄位高度。
+- **既有 V1.6.6 使用者：先升級 D1、部署 Worker，最後更新 GitHub Pages。** 只上傳前端不會完成本次升級。
+- 已保留附件內的 API 位址、Google Client ID、VAPID 公鑰、D1 資料庫 ID 與 Worker 名稱。
+- 私鑰與 OAuth Client Secret 不在 ZIP 內，也不應上傳 GitHub。
+- 所有交付檔案皆在同一層。ZIP 的最外層資料夾與 ZIP 名稱相同；請將此資料夾**裡面的檔案**上傳到原 GitHub 儲存庫根目錄。
+- 詳細步驟見 `DEPLOY.md`。本檔案交付未直接修改線上網站或正式資料庫。
 
+## 這版內容
 
-## V1.6.1 時間格式更新
+1. 全新深／淺色介面與月曆＋備註勾選 icon。保留原有 10 款配色，新增薄荷青預設色。
+2. 手機以頁首、內容、底部導覽分配高度。導覽列貼底，安全區只計算一次；月曆固定，當日事項獨立捲動。平板與桌機採側邊導覽與雙欄月曆。
+3. 新增／編輯行程的日期、時、分清楚分列；固定取消／儲存列。時分使用 00–23／00–59。iOS 鍵盤出現時以可見視窗調整編輯器高度。
+4. 備註提供全文搜尋、全部／未完成／已完成／置頂篩選、一鍵標記完成。分類提供搜尋輸入與新增按鈕，設定頁可管理分類。
+5. 開啟後先呈現本機內容，背景恢復連線。設定新授權流程後，Worker 可更新 Google 權杖，減少反覆登入。
+6. 本機 IndexedDB 依 App 路徑、帳號與工作區隔離。舊版資料僅在帳號與資料夾吻合時移轉，不刪除原始資料庫。登出不會把原帳號待同步資料傳給另一個帳號。
+7. 本機記錄與同步佇列同一交易寫入；伺服器確認後才移除待傳項目。同一記錄多次離線修改會合併；傳送途中再次修改會保留新版本待傳。衝突保留副本，刪除衝突需手動處理。
+8. 後端採條件版本寫入、操作識別碼去重及序號式同步游標，防止重送、版本競爭與時間游標漏接。
+9. Google Drive 附件逐檔顯示進度，分塊上傳，支援本次上傳工作階段中的斷線續傳、退避重試與取消。文字先存妥；重開 App 後未完成附件需重新選取，不會假裝檔案已上傳。
+10. 還原先檢查備份與差異，保存本機復原檔，再於 D1 單一批次交易還原行程、備註、提醒與設定。版本已被他人變更時中止；任何 SQL 失敗會回復原資料。伺服器另保存還原前快照，可按「復原上次還原」。
+11. 推播以每個裝置記錄服務接受狀態、重試時間與處理租約。失敗不寫成已送出；已接受的裝置不重複傳送。某裝置失敗不阻止下一次重複行程排程。
+12. 月曆與 Worker 共用日期規則。每月不存在的日期跳過該月，例如 1/31 的下一次為 3/31；每年 2/29 跳到下一個閏年。工作區時區一致，跨日與全天結束邊界一併處理。
+13. 新版本檔案先下載並逐一驗證 SHA-256，完整後才啟用。正在編輯、上傳或還原時延後切換。設定頁顯示目前／最新版本並可手動檢查；正常啟動、恢復前景與重新連線都會自動檢查。
 
-- 行程開始/結束與備註提醒時間一律使用 24 小時制（00:00–23:59），不受裝置 AM/PM 地區設定影響。
+## 日常操作
 
-## V1.6.0 介面更新
-- 手機（<=767px）：固定月曆工作區、底部導覽、左右滑動換月，適合單手操作。
-- 平板（768–1099px）：加寬內容卡片、雙欄備註/設定、置中浮動導覽。
-- 桌機（>=1100px）：左側常駐導覽、中央大月曆、右側當日事項，設定頁三欄配置。
-- 介面風格增加到 10 款卡通配色；所有風格皆支援黑/白模式並會記住選擇。
-# CalendarNotesPWA V1.6.1
+- 點月曆日期查看事項；點上方加號在所選日期新增。點跨月灰色日期保留原月份位置。
+- 手機左右滑月曆切月；桌機可搜尋行程。備註頁可搜尋標題、內容與標籤。
+- 新行程預設所選日期＋目前時間、結束一小時後、準時提醒。尚未手動改結束時間前，會跟隨開始時間調整。
+- 關閉編輯器會保留可解析的文字草稿；下次新增同類記錄會載入。未選妥日期的半成品仍應先修正後儲存。
+- 附件失敗時文字與已成功附件會保留；重試請只選尚未完成的附件。
+- 沒有登入時建立的內容保存在「本機模式」。登入後按設定頁「匯入本機模式內容」，確認後才複製到目前共享工作區，原本本機記錄保留。
+- 離線的新增與修改可保存。通知排程要在同步成功後才會出現在伺服器；請留意設定頁待同步筆數。
+- 備份 JSON 保存結構化內容及附件連結，**不是附件檔案本身**；請保留 Drive 上的原始附件。
+- 還原上限：單次 JSON 檔 1,500,000 bytes、2,000 筆行程＋備註。超過時停止且不修改資料。此界線用於控制個人部署的交易大小。
+- 還原回應前若斷線，伺服器可能已完成；請先同步確認，再重新預覽。不要重複操作原本預覽。
+- iPhone／iPad 請由加入主畫面的 PWA 啟用通知。測試顯示「推播服務已接受」仍需確認系統通知、勿擾與通知摘要設定。
 
-## V1.5.0：多人 Google 帳號共享工作區
+## 檔案用途
 
-本版將原本以 Google `user_sub` 個別隔離的 D1 資料改為 `workspace_id` 共享模式。所有通過同一 Google Drive 共用資料夾權限驗證的成員，可以看到同一份行事曆、備註、附件與提醒。
+| 範圍 | 檔案 |
+| --- | --- |
+| GitHub Pages 必需 | index.html、style.css、config.js、app.js、api.js、db.js、auth.js、recurrence.js、google-drive.js、push.js、holidays.js、service-worker.js、manifest.json、version.json、icon-192.png、icon-512.png、apple-touch-icon.png、.nojekyll |
+| Worker | worker.js、server-auth.js、recurrence.js、wrangler.jsonc、package.json、package-lock.json |
+| D1 | schema.sql（全新資料庫）、migrate_v2_0_0.sql（現有 V1.5+ 升級）、migrate_v1_5_0.sql（僅更舊資料庫需要） |
+| 發布與設定 | release.mjs、generate-auth-key.mjs、generate-vapid.mjs |
+| 說明 | README.md、DEPLOY.md、CHANGELOG.md、TEST_REPORT.md |
 
-- 固定工作區：`shared-main`
-- Google Drive Folder ID 是共享工作區識別與權限驗證來源。
-- 第一位使用者 / 舊版擁有者為 owner。
-- Drive 編輯者加入後為 editor；Viewer 為唯讀。
-- 共享事件 Reminder 會傳送給工作區所有已啟用 Push 的成員裝置。
-- V1.4.x 升級請先執行 `migrate_v1_5_0.sql` 一次，再 `npx wrangler deploy`。
+## 修改程式後再發布
 
-詳見 `UPDATE_V1_5_0.txt`。
+1. 在 config.js 提升 VERSION 與 BUILD（例如 V2.0.1、201）。
+2. 執行 `npm run release`，重建資產校驗資訊並同步套件與 Service Worker 版本。
+3. 後端有改動時重新 `npm run deploy`。
+4. 一次提交全部前端變更；避免只更新 version.json。
 
----
-
-GitHub Pages + Cloudflare Workers/D1 + Google Drive API 的行事曆、備註、提醒 PWA。
-
-## 已完成
-
-- 手機 / iPad / Windows / macOS 瀏覽器可使用，支援安裝成 PWA。
-- 月曆、單日事項、週期性行程（每天 / 每週 / 每月 / 每年）。
-- 備註 / 待辦、置頂、完成狀態、標籤、提醒。
-- 行程可設定 0 / 10 分鐘 / 1 小時 / 1 天 / 1 週前提醒。
-- Cloudflare Cron 每分鐘掃描 D1 到期提醒並 Web Push。
-- iOS / iPadOS Home Screen PWA、Chrome / Edge Web Push。
-- Google Drive 共用資料夾 URL / Folder ID 設定。
-- 照片、PDF、Office、TXT、CSV、ZIP 等附件使用 Google Drive resumable upload。
-- 自動建立 `CalendarPWA-Data/Attachments/Backups`。
-- Google Drive JSON 完整備份與「還原最新備份」。
-- IndexedDB 離線資料、待同步 Queue。
-- D1 revision 衝突偵測，衝突時保留副本。
-- `version.json` 啟動自動檢查更新 + 設定頁手動更新。
-- 所有原始檔皆在 ZIP 根目錄，沒有子資料夾。
-
-## 重要設計
-
-附件不經 Cloudflare Worker 中轉，而是瀏覽器直接上傳 Google Drive。Cloudflare 只保存結構化資料與提醒索引，因此大型照片 / PDF 不會占用 D1，也可避免 Worker request body 成為檔案上傳瓶頸。
-
-## 部署前需要修改的檔案
-
-### `wrangler.jsonc`
-
-1. `ALLOWED_ORIGINS`：改成你的 GitHub Pages Origin，例如 `https://lihe-source.github.io`。
-2. `VAPID_SUBJECT`：改成你的 email，例如 `mailto:abc@gmail.com`。
-3. 建立 D1 後把 `REPLACE_WITH_D1_DATABASE_ID` 換成真正的 Database ID。
-
-### `config.js`
-
-1. `API_BASE_URL`：Worker 部署後的 `https://xxx.workers.dev`。
-2. `GOOGLE_CLIENT_ID`：Google Cloud Web OAuth Client ID。
-3. `VAPID_PUBLIC_KEY`：`npm run vapid` 產生的 Public Key。
-
-## 安全注意
-
-- 不要把 `VAPID_PRIVATE_KEY` 放 GitHub。
-- Google OAuth Client ID 與 VAPID Public Key 可放前端；Private Key 不可。
-- Worker 每次 API 呼叫會用 Google access token 讀取 Google UserInfo 驗證使用者。
-- Push endpoint 僅接受 Google FCM、Mozilla Push、Apple Push 的 HTTPS host，避免 Worker 被當成任意 URL POST proxy。
-- V1 為了讓使用者「貼任意既有 Google Drive 共用資料夾 URL」而使用完整 Drive scope。若應用要公開給大量一般使用者，Google 可能要求 OAuth verification；個人 / 測試用途可將帳號加入 Test users。
-
-## 本機前端測試
-
-Windows 有 Python 時，在此資料夾執行：
-
-```powershell
-python -m http.server 8000
-```
-
-然後開啟：
-
-```text
-http://localhost:8000
-```
-
-Google OAuth Authorized JavaScript origins 需加入 `http://localhost:8000`。
-
-## 快速驗證清單
-
-- `https://你的Worker.workers.dev/api/health` 回傳 `ok: true`。
-- D1 `schema.sql` 已執行成功。
-- Worker 設有 `VAPID_PUBLIC_KEY`、`VAPID_PRIVATE_KEY` secrets。
-- GitHub Pages 可正常開啟。
-- Google OAuth Authorized JavaScript origins 包含 GitHub Pages origin。
-- 設定頁 Google 登入成功。
-- 貼 Drive Folder URL 後「測試並儲存」成功。
-- Drive 中出現 `CalendarPWA-Data`。
-- 新增一個 2~3 分鐘後的行程，設定「準時」提醒。
-- iPhone/iPad 必須先把網站加入主畫面，再從主畫面 PWA 開啟並按「啟用通知」。
-
-
-## V1.1.0 介面更新
-
-- 月曆日期固定左上角，使用者行程文字靠左。
-- 星期六、日使用粉紅色底；今天整格淡黃色。
-- 2026、2027 台灣政府辦公日曆的國定假日/補假以綠色標籤顯示。
-- 黑色 / 白色介面切換並保留裝置偏好。
-- 修正「清除快取並更新」會碰到同一 github.io 網域其他 PWA Service Worker 的問題。
-- 修正新增行程視窗 X / 取消被 required 欄位驗證擋住。
-- 手機月曆固定在單頁高度，左右滑切換月份。
-
-
-## V1.4.0 行程預設值更新
-
-- 新增行程的提醒預設勾選「準時」。
-- 新增行程的開始時間預設為開啟視窗當下時間。
-- 結束時間預設為開始時間 + 1 小時。
-- 新增行程時，若尚未手動修改結束時間，變更開始時間會同步將結束時間調整為 +1 小時。
-
-
-## V1.4.0 重要更新
-- Google 帳號可跨 PWA 關閉/重新開啟保留，並在 token 到期時嘗試 prompt=none 自動重新授權。
-- 手機新增/編輯 Dialog 改成固定容器，中間欄位獨立捲動，不再水平溢出。
-- 月曆左側加入 ISO WK 週別；2026/08/27 = WK35。
-- 點擊跨月灰色日期不再立即切月，避免該週突然跳到第一列。
-- 日期固定左上角。
-- Web Push 事件通知標題改為事件標題。
-- 本版 worker.js 有更新，更新 GitHub Pages 後需再次執行 `npx wrangler deploy`。
-
-
-## V1.4.0 介面更新
-- 月曆事件與假日標籤固定從日期下方往下排列。
-- V1.4.0 提供 5 款卡通風格配色；V1.6.0 再新增 5 款，目前共 10 款，並在本機持久保存。
-- 黑/白模式仍可獨立切換。
-
-
-## V1.4.0
-- V1.4.0 起改為純卡通配色風格；V1.6.0 已擴充為 10 款。
-- 手機月曆的當日事項區增加高度，維持月曆單頁固定瀏覽。
-- 修正 iOS 關閉懸浮視窗後 viewport/頁面高度可能殘留空白的問題。
-- Google 已登入時改顯示帳號頭像、名稱、Email 與登入狀態，隱藏重複登入按鈕。
+即使只改 config.js，也必須重新執行 `npm run release`，否則完整性校驗會保留上一個可用版本。一般改主題、帳號、資料夾與時區，請直接在 App 設定頁操作。

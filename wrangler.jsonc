@@ -3,10 +3,13 @@
   "name": "calendar-notes-pwa-api",
   "main": "worker.js",
   "compatibility_date": "2026-08-27",
-  "observability": { "enabled": true },
+  "observability": {
+    "enabled": true
+  },
   "vars": {
     "ALLOWED_ORIGINS": "https://lihe-source.github.io,http://localhost:8000,http://127.0.0.1:8000",
-    "VAPID_SUBJECT": "mailto:rexchre@gmail.com"
+    "VAPID_SUBJECT": "mailto:rexchre@gmail.com",
+    "GOOGLE_CLIENT_ID": "171837667604-mtcf91qudt6ff79u382v37rjqpp7l51q.apps.googleusercontent.com"
   },
   "d1_databases": [
     {
@@ -16,6 +19,8 @@
     }
   ],
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": [
+      "* * * * *"
+    ]
   }
 }

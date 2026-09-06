@@ -1,490 +1,297 @@
-import { all, put as dbPut, clear as dbClear, setMeta, getMeta } from './db.js';
-import { api, setAccessToken, getAccessToken, saveRemote, deleteRemote, flushQueue } from './api.js';
-import { extractFolderId, verifyFolder, ensureAppFolders, getOrCreateItemFolder, uploadFile, uploadJson, listLatestBackups, downloadJson } from './google-drive.js';
-import { enablePush, testPush } from './push.js';
-import { getTaiwanHoliday } from './holidays.js';
-
-const cfg=window.APP_CONFIG;
-const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
-const state={events:[],notes:[],selectedDate:new Date(),monthCursor:new Date(new Date().getFullYear(),new Date().getMonth(),1),editing:null,driveRoot:'',driveFolders:null,profile:null,lastSync:null,authStatus:'signedOut',workspace:null,workspaceMembers:[]};
-let tokenClient=null; let toastTimer=null; let tokenRequestMode='manual';
-
-boot().catch(e=>{console.error(e);toast(`啟動失敗：${friendlyError(e)}`)});
-
+import {initializeStore,setScope,getScope,all,put,getMeta,setMeta,listQueue,applyRemote,replaceSnapshot,readLegacy,migrateLegacy,acknowledge,guestRecords} from './db.js';
+import {api,getAccessToken,getSessionToken,saveRemote,deleteRemote,flushQueue} from './api.js';
+import {restoreSession,refreshAccess,prepareLogin,login,logout,getAuthConfig} from './auth.js';
+import {extractFolderId,ensureAppFolders,getOrCreateItemFolder,uploadFile,uploadJson,listLatestBackups,downloadJson} from './google-drive.js';
+import {enablePush,subscriptionState,disconnectPush,testPush} from './push.js';
+import {getTaiwanHoliday,TAIWAN_HOLIDAY_OFFICIAL_YEARS} from './holidays.js';
+import {occursOn,occurrenceAt,zonedParts,dateKeyInZone,fromZoned,validTimezone} from './recurrence.js';
+const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const state={events:[],notes:[],profile:null,workspace:null,members:[],view:'calendar',filter:'all',selected:'',year:0,month:0,timezone:cfg.DEFAULT_TIMEZONE,driveRoot:'',folders:null,categories:['工作','會議','生活'],editing:null,saving:false,restoring:false,backingUp:false,syncing:false,lastSync:null,authReady:false};
+let connectionPromise=null,syncPromise=null,toastTimer,legacy=null,uploadController=null,pendingRestore=null,registration=null,updatePromise=null,waitingVersion='',draftTimer,lastMembersAt=0;
+const icon=name=>`<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const connected=()=>!!(getAccessToken()||getSessionToken());
+const canEdit=()=>!state.restoring&&!state.saving&&state.workspace?.role!=='viewer';
+const task=fn=>Promise.resolve().then(fn).catch(e=>{console.error(e);toast(friendly(e))});
+const formatTime=iso=>new Intl.DateTimeFormat('zh-TW',{timeZone:state.timezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(iso));
+const formatDateTime=iso=>iso?new Intl.DateTimeFormat('zh-TW',{timeZone:state.timezone,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(iso)):'—';
+const today=()=>dateKeyInZone(new Date(),state.timezone);
+const dateKey=(y,m,d)=>`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+const bytes=n=>Number(n)>1048576?`${(n/1048576).toFixed(1)} MB`:`${Math.ceil(Number(n||0)/1024)} KB`;
+function friendly(e){const m=e?.message||String(e);return {GOOGLE_LOGIN_REQUIRED:'Google 授權需要更新，請在設定頁重新登入；本機資料已保留。',UNAUTHORIZED:'Google 授權已到期，請重新登入。',WORKSPACE_REQUIRED:'請先加入共享工作區。',READ_ONLY_MEMBER:'目前帳號為唯讀，無法修改資料。',ACCOUNT_CHANGED:'帳號已切換，已停止上一個帳號的同步。',RESTORE_CONFLICT:'其他成員剛更新資料，還原已中止。請重新預覽備份。',WORKSPACE_FOLDER_MISMATCH:'備份或資料夾屬於另一個共享工作區。',DRIVE_ACCESS_REVOKED:'共用資料夾權限已移除。',SERVER_ERROR:'伺服器未能完成操作。若剛升級，請先完成資料庫升級及 Worker 部署。',INVALID_TIMEZONE:'請輸入有效時區，例如 Asia/Taipei。'}[m]||(e?.name==='TimeoutError'?'連線逾時；本機內容已保留，稍後可重試。':e?.name==='AbortError'?'操作已取消；已儲存的文字仍保留。':m);}
+function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),5000)}
+function status(message){$('#statusLine').textContent=message}
+async function loadLocal(){[state.events,state.notes]=await Promise.all([all('events'),all('notes')]);state.events=state.events.filter(x=>!x.deleted_at);state.notes=state.notes.filter(x=>!x.deleted_at);state.lastSync=await getMeta('lastSyncAt',null);state.categories=await getMeta('categories',['工作','會議','生活']);state.timezone=await getMeta('timezone',cfg.DEFAULT_TIMEZONE);$('#timezoneInput').value=state.timezone;}
+function renderAll(){renderCalendar();renderDay();renderNotes();renderSettings();}
 async function boot(){
-  $('#currentVersion').textContent=cfg.VERSION;
-  $('#appTitle').textContent=cfg.APP_NAME;
-  const savedTheme=localStorage.getItem('calendarNotesTheme')||await getMeta('theme','dark');
-  applyTheme(savedTheme,false);
-  const savedUiStyle=localStorage.getItem('calendarNotesUiStyle')||await getMeta('uiStyle','cartoon-lime');
-  applyUiStyle(savedUiStyle,false);
-  bindUi();
-  await registerServiceWorker();
-  await loadLocal();
-  await restorePersistentGoogleSession();
-  state.driveRoot=await getMeta('driveRoot','');
-  $('#driveFolderInput').value=state.driveRoot||'';
-  $('#timezoneInput').value=await getMeta('timezone',cfg.DEFAULT_TIMEZONE);
-  state.lastSync=await getMeta('lastSync',null); updateSyncLabel();
-  renderAll();
-  await checkUpdate(true);
-  if(getAccessToken()) await afterLogin(false);
-  else if(state.profile) autoReconnectGoogle();
-  setInterval(()=>{if(getAccessToken()&&navigator.onLine) syncAll(false).catch(console.warn)},cfg.AUTO_SYNC_INTERVAL_MS);
-  window.addEventListener('online',()=>{setStatus('已連線，正在同步…');syncAll(false).catch(console.warn)});
-  window.addEventListener('offline',()=>setStatus('離線模式：資料會保存在此裝置'));
-  handleDeepLink();
-}
-
-function bindUi(){
-  $$('.nav-btn').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
-  $('#prevMonthBtn').onclick=()=>changeMonth(-1);
-  $('#nextMonthBtn').onclick=()=>changeMonth(1);
-  $('#todayBtn').onclick=()=>{const n=new Date();state.monthCursor=new Date(n.getFullYear(),n.getMonth(),1);state.selectedDate=n;renderCalendar();renderDayEvents()};
-  $('#addEventBtn').onclick=()=>openEventEditor(); $('#addNoteBtn').onclick=()=>openNoteEditor();
-  $('#quickAddBtn').onclick=()=>openAppDialog($('#quickDialog')); $('#quickClose').onclick=()=>closeAppDialog($('#quickDialog'));
-  $('#quickEvent').onclick=()=>{closeAppDialog($('#quickDialog'));openEventEditor()}; $('#quickNote').onclick=()=>{closeAppDialog($('#quickDialog'));openNoteEditor()};
-  $('#saveItemBtn').onclick=saveEditor; $('#deleteItemBtn').onclick=deleteEditorItem;
-  $('#editorCloseBtn').onclick=closeEditor; $('#editorCancelBtn').onclick=closeEditor;
-  $('#editorDialog').addEventListener('cancel',e=>{e.preventDefault();closeEditor()});
-  $$('#editorDialog, #quickDialog').forEach(d=>d.addEventListener('close',releaseModalViewport));
-  $('#noteSearch').addEventListener('input',renderNotes);
-  $('#syncBtn').onclick=()=>syncAll(true);
-  $('#googleLoginBtn').onclick=googleLogin; $('#googleLogoutBtn').onclick=googleLogout;
-  $('#verifyDriveBtn').onclick=verifyAndSaveDrive; $('#backupBtn').onclick=backupNow; $('#restoreBtn').onclick=restoreLatestBackup;
-  $('#enablePushBtn').onclick=enableNotifications; $('#testPushBtn').onclick=sendTestPush;
-  $('#checkUpdateBtn').onclick=()=>checkUpdate(false); $('#forceUpdateBtn').onclick=forceUpdate;
-  $$('.theme-option').forEach(b=>b.addEventListener('click',()=>applyTheme(b.dataset.themeChoice,true)));
-  $('#uiStyleSelect')?.addEventListener('change',e=>applyUiStyle(e.target.value,true));
-  bindCalendarSwipe();
-  $('#timezoneInput').addEventListener('change',async()=>{await setMeta('timezone',$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE);if(getAccessToken()) await saveSettingsRemote()});
-}
-
-async function loadLocal(){
-  state.events=(await all('events')).filter(x=>!x.deleted_at); state.notes=(await all('notes')).filter(x=>!x.deleted_at);
-}
-function renderAll(){renderCalendar();renderDayEvents();renderNotes();renderStatusPanels()}
-function showView(name){
-  $$('.view').forEach(v=>v.classList.remove('active')); $(`#${name}View`).classList.add('active');
-  $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
-  document.body.classList.toggle('calendar-active',name==='calendar');
-}
-
-
-function changeMonth(delta){
-  const current=state.monthCursor;const target=new Date(current.getFullYear(),current.getMonth()+delta,1);
-  const wantedDay=state.selectedDate.getDate();const maxDay=new Date(target.getFullYear(),target.getMonth()+1,0).getDate();
-  state.monthCursor=target;state.selectedDate=new Date(target.getFullYear(),target.getMonth(),Math.min(wantedDay,maxDay));
-  renderCalendar();renderDayEvents();
-}
-function bindCalendarSwipe(){
-  const el=$('#monthGrid');if(!el)return;let sx=0,sy=0,dx=0,dy=0,tracking=false;
-  el.addEventListener('touchstart',e=>{if(e.touches.length!==1)return;tracking=true;sx=e.touches[0].clientX;sy=e.touches[0].clientY;dx=0;dy=0},{passive:true});
-  el.addEventListener('touchmove',e=>{if(!tracking||e.touches.length!==1)return;dx=e.touches[0].clientX-sx;dy=e.touches[0].clientY-sy;if(Math.abs(dx)>18&&Math.abs(dx)>Math.abs(dy)*1.15)e.preventDefault()},{passive:false});
-  el.addEventListener('touchend',e=>{if(!tracking)return;if(e.changedTouches?.length){dx=e.changedTouches[0].clientX-sx;dy=e.changedTouches[0].clientY-sy}tracking=false;if(Math.abs(dx)>=52&&Math.abs(dx)>Math.abs(dy)*1.25)changeMonth(dx<0?1:-1)},{passive:true});
-  el.addEventListener('touchcancel',()=>{tracking=false},{passive:true});
-}
-let modalReturnScrollY=0;
-function openAppDialog(dialog){
-  if(!dialog||dialog.open)return;
-  modalReturnScrollY=window.scrollY||0;
-  document.documentElement.classList.add('modal-open');document.body.classList.add('modal-open');
-  dialog.showModal();
-}
-function closeAppDialog(dialog){
-  if(!dialog?.open)return;
-  const active=document.activeElement;if(active&&typeof active.blur==='function')active.blur();
-  dialog.close();
-}
-function releaseModalViewport(){
-  requestAnimationFrame(()=>{
-    if(document.querySelector('dialog[open]'))return;
-    document.documentElement.classList.remove('modal-open');document.body.classList.remove('modal-open');
-    const maxScroll=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
-    window.scrollTo(0,Math.min(modalReturnScrollY,maxScroll));
-    // iOS 在鍵盤 / dialog 關閉後偶爾延後更新 visual viewport，再校正一次避免頁面底部多出空白。
-    setTimeout(()=>{const max2=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);window.scrollTo(0,Math.min(modalReturnScrollY,max2))},80);
-  });
-}
-function closeEditor(){state.editing=null;closeAppDialog($('#editorDialog'))}
-async function applyTheme(theme,persist=true){
-  const value=theme==='light'?'light':'dark';document.documentElement.dataset.theme=value;
-  try{localStorage.setItem('calendarNotesTheme',value)}catch{}
-  const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=value==='light'?'#f7f9fc':'#111827';
-  $$('.theme-option').forEach(b=>b.classList.toggle('active',b.dataset.themeChoice===value));
-  if(persist)await setMeta('theme',value);
-}
-
-async function applyUiStyle(style,persist=true){
-  const legacyMap={windows10:'cartoon-lime',mac:'cartoon-lime',ios26:'cartoon-lime',cartoon:'cartoon-lime'};
-  const allowed=new Set(['cartoon-lime','cartoon-sky','cartoon-peach','cartoon-lavender','cartoon-berry','cartoon-mint','cartoon-lemon','cartoon-coral','cartoon-cocoa','cartoon-night']);
-  const migrated=legacyMap[style]||style;
-  const value=allowed.has(migrated)?migrated:'cartoon-lime';
-  document.documentElement.dataset.uiStyle=value;
-  try{localStorage.setItem('calendarNotesUiStyle',value)}catch{}
-  const select=$('#uiStyleSelect');if(select)select.value=value;
-  if(persist)await setMeta('uiStyle',value);
-}
-
-function renderCalendar(){
-  const y=state.monthCursor.getFullYear(),m=state.monthCursor.getMonth(); $('#monthLabel').textContent=`${y} 年 ${m+1} 月`;
-  const first=new Date(y,m,1); const start=new Date(y,m,1-first.getDay()); const todayKey=dateKey(new Date()); const selectedKey=dateKey(state.selectedDate);
-  const grid=$('#monthGrid');grid.innerHTML='';
-  const weekBox=$('#weekNumbers');if(weekBox){weekBox.innerHTML='';for(let row=0;row<6;row++){const rowStart=new Date(start);rowStart.setDate(start.getDate()+row*7);const marker=new Date(rowStart);marker.setDate(rowStart.getDate()+4);const rowEnd=new Date(rowStart);rowEnd.setDate(rowStart.getDate()+6);const wk=document.createElement('div');wk.className='week-number';if(state.selectedDate>=rowStart&&state.selectedDate<=new Date(rowEnd.getFullYear(),rowEnd.getMonth(),rowEnd.getDate(),23,59,59,999))wk.classList.add('active');wk.textContent=`WK${String(isoWeekNumber(marker)).padStart(2,'0')}`;weekBox.appendChild(wk)}}
-  for(let i=0;i<42;i++){
-    const d=new Date(start);d.setDate(start.getDate()+i);const key=dateKey(d);const cell=document.createElement('button');
-    const weekday=d.getDay(); const holiday=getTaiwanHoliday(key);
-    cell.type='button';cell.className='day-cell';
-    if(d.getMonth()!==m)cell.classList.add('muted');
-    if(weekday===0||weekday===6)cell.classList.add('weekend');
-    if(key===todayKey)cell.classList.add('today');
-    if(key===selectedKey)cell.classList.add('selected');
-    if(holiday)cell.classList.add('holiday');
-    const evs=eventsForDate(key);
-    const holidayHtml=holiday?`<span class="holiday-chip" title="${attr(holiday.name)}">${esc(holiday.name)}</span>`:'';
-    const eventsHtml=evs.slice(0,3).map(e=>`<span class="event-dot">${esc(e.title)}</span>`).join('');
-    const moreHtml=evs.length>3?`<div class="more-dot">+${evs.length-3}</div>`:'';
-    // 日期固定左上；假日與事件放進獨立內容區，強制從上往下排列，避免 button 內文被瀏覽器垂直置中。
-    cell.innerHTML=`<span class="day-num">${d.getDate()}</span><div class="day-content">${holidayHtml}${eventsHtml}${moreHtml}</div>`;
-    // 點選前後月份的灰色日期時只選取日期，不自動重排月份，保留上一週與目前視覺位置。
-    cell.onclick=()=>{state.selectedDate=new Date(d);renderCalendar();renderDayEvents()};grid.appendChild(cell);
+  await initializeStore();legacy=await readLegacy();state.profile=await restoreSession(legacy);
+  if(!state.profile)await setScope();
+  else if(getScope()==='guest'){
+    const root=await getMeta('lastDriveRoot',legacy?.meta.driveRoot||'');await setScope(state.profile.sub,root);await migrateLegacy(legacy,state.profile,root);
   }
+  await loadLocal();state.driveRoot=await getMeta('lastDriveRoot',legacy?.meta.driveRoot||'');$('#driveFolderInput').value=state.driveRoot;
+  const theme=localStorage.getItem('calendarNotesTheme')||legacy?.meta.theme||'dark';applyTheme(theme);
+  const oldStyle=localStorage.getItem('calendarNotesUiStyle');applyStyle(localStorage.getItem('calendarNotesUiStyleV2')||(oldStyle&&oldStyle!=='cartoon-lime'?oldStyle:'mint'));
+  state.selected=await getMeta('selectedDate',today());const [y,m]=state.selected.split('-').map(Number);state.year=y;state.month=m;
+  $('#currentVersion').textContent=cfg.VERSION;$('#headerVersion').textContent=cfg.VERSION;
+  bindUi();renderAll();updateQueueStatus();setupViewport();
+  registerWorker().then(()=>checkUpdate(true)).catch(e=>{$('#updateStatus').textContent=friendly(e)});
+  prepareLogin().then(()=>{state.authReady=true;renderSettings()}).catch(()=>{});
+  if(state.profile&&connected()&&navigator.onLine)task(()=>connectWorkspace(false));
+  else status(state.profile?'本機資料已載入；連線後自動同步':'本機模式 · 登入後可同步');
+  setInterval(()=>{if(document.visibilityState==='visible'&&connected()&&navigator.onLine&&!state.restoring)task(()=>syncAll(false))},cfg.AUTO_SYNC_INTERVAL_MS);
+  addEventListener('online',()=>{status('已連線，準備同步…');if(connected())task(()=>syncAll(false));task(()=>checkUpdate(true))});
+  addEventListener('offline',()=>status('離線模式 · 修改保留在此裝置'));
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){task(()=>checkUpdate(true));if(connected()&&navigator.onLine)task(()=>syncAll(false))}});
+  addEventListener('beforeunload',e=>{if(state.saving||state.restoring){e.preventDefault();e.returnValue=''}});
+  openDeepLink(location.href);
 }
-function renderDayEvents(){
-  const key=dateKey(state.selectedDate);$('#selectedDateLabel').textContent=`${state.selectedDate.getMonth()+1}/${state.selectedDate.getDate()} 事項`;
-  const items=eventsForDate(key).sort((a,b)=>String(a.start_at).localeCompare(String(b.start_at)));const box=$('#dayEvents');
-  box.innerHTML=items.length?'':'<div class="hint">這天沒有行程。</div>';
-  items.forEach(e=>{const div=document.createElement('button');div.className='list-item';div.innerHTML=`<div class="grow"><h4>${esc(e.title)}</h4><div class="meta">${e.all_day?'全天':formatTime(e.start_at)} ${e.location?` · ${esc(e.location)}`:''}</div>${e.description?`<div class="snippet">${esc(shorten(e.description,100))}</div>`:''}</div>${e.reminder_minutes?.length?'<span class="badge">🔔</span>':''}`;div.onclick=()=>openEventEditor(e);box.appendChild(div)});
+function bindUi(){
+  $$('.nav-btn[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));
+  $('#statusBtn').onclick=()=>showView('settings');$('#syncBtn').onclick=()=>task(()=>syncAll(true));
+  $('#prevMonthBtn').onclick=()=>changeMonth(-1);$('#nextMonthBtn').onclick=()=>changeMonth(1);$('#todayBtn').onclick=()=>{selectDate(today());const [y,m]=state.selected.split('-').map(Number);state.year=y;state.month=m;renderCalendar()};
+  $('#eventSearch').oninput=renderDay;$('#noteSearch').oninput=renderNotes;
+  $$('.filter').forEach(b=>b.onclick=()=>{state.filter=b.dataset.filter;$$('.filter').forEach(x=>x.classList.toggle('active',x===b));renderNotes()});
+  $('#addEventBtn').onclick=()=>task(()=>openEditor('events'));$('#addNoteBtn').onclick=()=>task(()=>openEditor('notes'));
+  $('#quickAddBtn').onclick=()=>{if(canEdit())$('#quickDialog').showModal()};$('#quickClose').onclick=()=>$('#quickDialog').close();$('#quickDialog').addEventListener('close',activateReadyUpdate);
+  $('#quickEvent').onclick=()=>{$('#quickDialog').close();task(()=>openEditor('events'))};$('#quickNote').onclick=()=>{$('#quickDialog').close();task(()=>openEditor('notes'))};
+  $('#editorForm').onsubmit=e=>{e.preventDefault();task(saveEditor)};$('#editorCloseBtn').onclick=()=>task(closeEditor);$('#editorCancelBtn').onclick=()=>task(closeEditor);
+  $('#editorDialog').addEventListener('cancel',e=>{e.preventDefault();task(closeEditor)});$('#editorDialog').addEventListener('close',()=>{setupViewport();activateReadyUpdate()});
+  $('#deleteItemBtn').onclick=()=>task(deleteEditor);$('#cancelUploadBtn').onclick=()=>uploadController?.abort();
+  $('#googleLoginBtn').onclick=()=>login(profile=>task(()=>onLogin(profile)),e=>toast(friendly(e)));$('#googleLogoutBtn').onclick=()=>task(signOut);
+  $('#verifyDriveBtn').onclick=()=>task(joinFolder);$('#backupBtn').onclick=()=>task(backupNow);$('#restoreBtn').onclick=()=>task(previewCloudRestore);
+  $('#exportBtn').onclick=()=>task(()=>downloadBackup(makeBackup(),'calendar-backup'));$('#importBtn').onclick=()=>$('#importFile').click();$('#importFile').onchange=()=>task(async()=>{const file=$('#importFile').files[0];if(!file)return;if(file.size>1500000)throw new Error('備份檔案過大（上限約 1.5 MB）');const data=JSON.parse(await file.text());await previewRestore(data,file.name);$('#importFile').value=''});
+  $('#guestImportBtn').onclick=()=>task(importGuest);$('#recoverBtn').onclick=()=>task(recoverRestore);
+  $('#restoreCloseBtn').onclick=closeRestore;$('#restoreCancelBtn').onclick=closeRestore;$('#restoreConfirmBtn').onclick=()=>task(confirmRestore);$('#restoreDialog').addEventListener('cancel',e=>{if(state.restoring)e.preventDefault()});
+  $('#enablePushBtn').onclick=()=>task(async()=>{if(!state.workspace)throw new Error('WORKSPACE_REQUIRED');await enablePush();await refreshPush();toast('此裝置已啟用通知')});$('#testPushBtn').onclick=()=>task(async()=>{const r=await testPush();toast(r.sent?'推播服務已接受本裝置的測試通知；請確認系統通知。':r.errors?.join('；')||'此裝置尚未訂閱通知');await refreshPush()});$('#refreshPushBtn').onclick=()=>task(refreshPush);
+  $$('.theme-option').forEach(b=>b.onclick=()=>applyTheme(b.dataset.themeChoice));$('#uiStyleSelect').onchange=e=>applyStyle(e.target.value);
+  $('#addCategoryBtn').onclick=()=>task(addCategory);$('#newCategory').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();task(addCategory)}};
+  $('#timezoneInput').onchange=()=>task(async()=>{const tz=$('#timezoneInput').value.trim();if(!validTimezone(tz))throw new Error('INVALID_TIMEZONE');state.timezone=tz;await setMeta('timezone',tz);await savePreferences();renderAll()});
+  $('#checkUpdateBtn').onclick=()=>task(()=>checkUpdate(false));$('#forceUpdateBtn').onclick=()=>task(()=>checkUpdate(false,true));
+  $('#main').onscroll=()=>$('#toTopBtn').classList.toggle('hidden',$('#main').scrollTop<300);$('#toTopBtn').onclick=()=>$('#main').scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+  let touch=null;$('#monthGrid').addEventListener('touchstart',e=>{if(e.touches.length===1)touch={x:e.touches[0].clientX,y:e.touches[0].clientY}},{passive:true});$('#monthGrid').addEventListener('touchend',e=>{if(!touch)return;const dx=e.changedTouches[0].clientX-touch.x,dy=e.changedTouches[0].clientY-touch.y;touch=null;if(Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)*1.5)changeMonth(dx<0?1:-1)},{passive:true});
+}
+function applyTheme(theme){const value=theme==='light'?'light':'dark';document.documentElement.dataset.theme=value;localStorage.setItem('calendarNotesTheme',value);document.querySelector('meta[name="theme-color"]').content=value==='light'?'#f3f7f6':'#111a24';$$('.theme-option').forEach(b=>b.classList.toggle('active',b.dataset.themeChoice===value))}
+function applyStyle(style){if(![...$('#uiStyleSelect').options].some(o=>o.value===style))style='mint';document.documentElement.dataset.uiStyle=style;$('#uiStyleSelect').value=style;localStorage.setItem('calendarNotesUiStyleV2',style)}
+function showView(name){if(!['calendar','notes','settings'].includes(name))return;state.view=name;document.body.dataset.view=name;$$('.view').forEach(x=>x.classList.toggle('active',x.id===name+'View'));$$('.nav-btn[data-view]').forEach(x=>{x.classList.toggle('active',x.dataset.view===name);if(x.dataset.view===name)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current')});$('#main').scrollTop=0;$('#toTopBtn').classList.add('hidden');if(name==='settings')task(refreshPush)}
+function changeMonth(delta){const d=new Date(Date.UTC(state.year,state.month-1+delta,1));state.year=d.getUTCFullYear();state.month=d.getUTCMonth()+1;const wanted=Number(state.selected.slice(8));selectDate(dateKey(state.year,state.month,Math.min(wanted,new Date(Date.UTC(state.year,state.month,0)).getUTCDate())))}
+function selectDate(key){state.selected=key;setMeta('selectedDate',key).catch(()=>{});renderCalendar();renderDay()}
+function isoWeek(d){const t=new Date(d);const n=t.getUTCDay()||7;t.setUTCDate(t.getUTCDate()+4-n);return Math.ceil(((t-Date.UTC(t.getUTCFullYear(),0,1))/86400000+1)/7)}
+function eventsOn(key){return state.events.filter(e=>occursOn(e,key,state.timezone))}
+function renderCalendar(){
+  if(!state.year)return;$('#monthLabel').textContent=`${state.year} 年 ${state.month} 月`;$('#holidayHint').textContent=TAIWAN_HOLIDAY_OFFICIAL_YEARS.includes(state.year)?'假日以綠色標示':'此年份僅顯示固定日期假日';
+  const first=new Date(Date.UTC(state.year,state.month-1,1)),start=new Date(first);start.setUTCDate(1-first.getUTCDay());const fragment=document.createDocumentFragment(),weeks=document.createDocumentFragment();
+  for(let i=0;i<42;i++){
+    const d=new Date(start);d.setUTCDate(start.getUTCDate()+i);const key=d.toISOString().slice(0,10),items=eventsOn(key),holiday=getTaiwanHoliday(key),button=document.createElement('button');
+    button.type='button';button.className=['day-cell',d.getUTCMonth()+1!==state.month?'muted':'',[0,6].includes(d.getUTCDay())?'weekend':'',key===today()?'today':'',key===state.selected?'selected':'',holiday?'holiday':''].filter(Boolean).join(' ');button.setAttribute('aria-label',`${key}${holiday?' '+holiday.name:''}，${items.length} 個行程`);button.setAttribute('aria-pressed',String(key===state.selected));
+    button.innerHTML=`<span class="day-num">${d.getUTCDate()}</span><div class="day-content">${holiday?`<span class="holiday-chip" title="${esc(holiday.name)}">${esc(holiday.name)}</span>`:''}${items.slice(0,2).map(e=>`<span class="event-dot">${e.all_day?'':formatTime(e.start_at)+' '}${esc(e.title)}</span>`).join('')}${items.length>2?`<span class="more-dot">＋${items.length-2}</span>`:''}</div><span class="mobile-dots">${items.slice(0,3).map(()=>'<i></i>').join('')}</span>`;
+    button.onclick=()=>selectDate(key);fragment.append(button);
+    if(i%7===0){const marker=new Date(d);marker.setUTCDate(marker.getUTCDate()+4);const week=document.createElement('span');week.className='week-number';week.textContent=isoWeek(marker);weeks.append(week)}
+  }
+  $('#monthGrid').replaceChildren(fragment);$('#weekNumbers').replaceChildren(weeks);
+}
+function renderDay(){
+  if(!state.selected)return;const d=new Date(state.selected+'T12:00:00Z'),q=$('#eventSearch').value.trim().toLowerCase();$('#selectedDateLabel').textContent=`${Number(state.selected.slice(5,7))}/${Number(state.selected.slice(8))} 星期${'日一二三四五六'[d.getUTCDay()]}`;
+  const items=(q?state.events.filter(e=>`${e.title} ${e.description} ${e.location}`.toLowerCase().includes(q)):eventsOn(state.selected)).sort((a,b)=>a.start_at.localeCompare(b.start_at));$('#daySummary').textContent=`${q?'搜尋結果':'當日事項'} ${items.length}`;
+  const box=$('#dayEvents');box.replaceChildren();if(!items.length){box.innerHTML=`<div class="empty-state">${icon('calendar')}${q?'找不到符合的行程':'這天沒有行程'}${q?'':'<br><button class="secondary" id="emptyAddEvent">新增行程</button>'}</div>`;$('#emptyAddEvent')?.addEventListener('click',()=>task(()=>openEditor('events')));return;}
+  for(const e of items){const b=document.createElement('button');b.className='list-item';b.innerHTML=`<span class="event-time">${e.all_day?'全天':formatTime(e.start_at)}</span><div class="grow"><h4>${e.completed?'✓ ':''}${esc(e.title)}</h4><div class="meta">${q?formatDateTime(e.start_at)+' ':''}${esc(e.location||e.category||'')}${e.repeat_rule?' · 重複行程':''}</div>${e.description?`<p class="snippet">${esc(e.description.slice(0,100))}</p>`:''}<div class="item-icons">${e.reminder_minutes?.length?icon('bell'):''}${e.attachment_meta?.length?icon('clip')+`<span class="meta">${e.attachment_meta.length}</span>`:''}</div></div>`;b.onclick=()=>task(()=>openEditor('events',e));box.append(b)}
 }
 function renderNotes(){
-  const q=$('#noteSearch').value.trim().toLowerCase();let arr=[...state.notes].filter(n=>!n.deleted_at);if(q)arr=arr.filter(n=>`${n.title} ${n.content} ${(n.tags||[]).join(' ')}`.toLowerCase().includes(q));arr.sort((a,b)=>(Number(b.pinned)-Number(a.pinned))||String(b.updated_at).localeCompare(String(a.updated_at)));
-  const box=$('#notesList');box.innerHTML=arr.length?'':'<div class="hint">尚無備註。</div>';
-  arr.forEach(n=>{const div=document.createElement('button');div.className='list-item';div.innerHTML=`<div class="grow"><h4>${n.pinned?'📌 ':''}${esc(n.title)}</h4><div class="meta">${formatDateTime(n.updated_at)} ${n.reminder_at?' · 🔔 '+formatDateTime(n.reminder_at):''}</div>${n.content?`<div class="snippet">${esc(shorten(n.content,150))}</div>`:''}<div>${(n.tags||[]).slice(0,5).map(t=>`<span class="badge">${esc(t)}</span>`).join('')}</div></div>`;div.onclick=()=>openNoteEditor(n);box.appendChild(div)});
+  const q=$('#noteSearch').value.trim().toLowerCase();let items=state.notes.filter(n=>`${n.title} ${n.content} ${(n.tags||[]).join(' ')}`.toLowerCase().includes(q));items=items.filter(n=>state.filter==='all'||state.filter==='open'&&!n.completed||state.filter==='completed'&&n.completed||state.filter==='pinned'&&n.pinned).sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.updated_at.localeCompare(a.updated_at));$('#notesSummary').textContent=`${state.notes.filter(n=>!n.completed).length} 個未完成 · ${state.notes.length} 則備註`;
+  const box=$('#notesList');box.replaceChildren();if(!items.length){box.innerHTML=`<div class="empty-state">${icon('note')}${q?'找不到符合的備註':'此分類尚無備註'}</div>`;return;}
+  for(const n of items){const card=document.createElement('article');card.className='note-card'+(n.completed?' completed':'');card.innerHTML=`<button class="note-open"><h4>${n.pinned?'⌖ ':''}${esc(n.title)}</h4><div class="snippet">${esc(n.content?.slice(0,180)||'')}</div><div class="tags">${[n.category,...(n.tags||[])].filter(Boolean).slice(0,5).map(t=>`<span class="badge">${esc(t)}</span>`).join('')}</div></button><div class="note-footer"><span class="meta">${n.reminder_at?icon('bell')+' '+formatDateTime(n.reminder_at):formatDateTime(n.updated_at)}${n.attachment_meta?.length?' · 附件 '+n.attachment_meta.length:''}</span><button class="note-done" aria-label="${n.completed?'標記未完成':'標記完成'}" aria-pressed="${n.completed}">${n.completed?icon('check'):'○'}</button></div>`;
+    card.querySelector('.note-open').onclick=()=>task(()=>openEditor('notes',n));card.querySelector('.note-done').disabled=!canEdit();card.querySelector('.note-done').onclick=()=>task(async()=>{if(!canEdit())return;await saveRemote('notes',{...n,completed:!n.completed,updated_at:new Date().toISOString()});await loadLocal();renderAll();updateQueueStatus();if(connected())task(()=>syncAll(false))});box.append(card)}
 }
-function renderStatusPanels(){
-  const hasToken=!!getAccessToken();const connected=hasToken&&!!state.profile;
-  const card=$('#googleIdentityCard'),avatar=$('#googleAvatar'),fallback=$('#googleAvatarFallback');
-  if(state.profile){
-    card?.classList.remove('hidden');
-    if($('#googleIdentityName'))$('#googleIdentityName').textContent=state.profile.name||state.profile.email||'Google 使用者';
-    if($('#googleIdentityEmail'))$('#googleIdentityEmail').textContent=state.profile.email||'';
-    const initial=(state.profile.name||state.profile.email||'G').trim().charAt(0).toUpperCase()||'G';
-    if(fallback){fallback.textContent=initial;fallback.classList.toggle('hidden',!!state.profile.picture)}
-    if(avatar){
-      if(state.profile.picture){avatar.src=state.profile.picture;avatar.alt=`${state.profile.name||'Google 使用者'} 的 Google 帳號頭像`;avatar.classList.remove('hidden')}
-      else{avatar.removeAttribute('src');avatar.classList.add('hidden')}
-      avatar.onerror=()=>{avatar.classList.add('hidden');fallback?.classList.remove('hidden')};
-    }
-    if($('#googleIdentityBadge'))$('#googleIdentityBadge').textContent=connected?'已登入':'已記住';
-  }else card?.classList.add('hidden');
-  const loginBtn=$('#googleLoginBtn'),logoutBtn=$('#googleLogoutBtn');
-  if(loginBtn){loginBtn.classList.toggle('hidden',connected);loginBtn.textContent=state.profile?'重新授權 Google Drive':'登入 / 授權 Google Drive'}
-  if(logoutBtn)logoutBtn.classList.toggle('hidden',!state.profile);
-  if(connected) $('#googleStatus').textContent='Google 帳號已連線';
-  else if(state.authStatus==='reconnecting'&&state.profile) $('#googleStatus').textContent='正在自動重新連線 Google…';
-  else if(state.profile) $('#googleStatus').textContent='帳號已記住；Google 要求重新驗證時才需重新授權';
-  else $('#googleStatus').textContent='尚未登入';
-
-  const wsStatus=$('#workspaceStatus'),wsMembers=$('#workspaceMembers');
-  if(state.workspace){
-    const roleLabel={owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace.role]||state.workspace.role;
-    if(wsStatus)wsStatus.innerHTML=`<strong>${esc(state.workspace.name||'共享行事曆')}</strong><br><span class="hint">已加入共享工作區 · ${roleLabel} · ${state.workspaceMembers.length||'—'} 位成員</span>`;
-    if(wsMembers)wsMembers.innerHTML=state.workspaceMembers.length?state.workspaceMembers.map(m=>`<div class="workspace-member"><span class="workspace-member-avatar">${esc((m.name||m.email||'G').trim().charAt(0).toUpperCase())}</span><span><strong>${esc(m.name||m.email||'Google 使用者')}</strong><small>${esc(m.email||'')} · ${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[m.role]||esc(m.role||'')}</small></span></div>`).join(''):'<div class="hint">成員資料同步中…</div>';
-  }else{
-    if(wsStatus)wsStatus.innerHTML=connected?'尚未加入共享工作區。請在下方貼上「所有成員共用」的 Google Drive 資料夾並按「加入 / 測試並儲存」。':'登入 Google 後即可加入共享工作區。';
-    if(wsMembers)wsMembers.innerHTML='';
+function renderSettings(){
+  const p=state.profile;$('#googleIdentityCard').classList.toggle('hidden',!p);$('#googleLoginBtn').classList.toggle('hidden',!!p&&connected());$('#googleLogoutBtn').classList.toggle('hidden',!p);$('#googleLoginBtn').textContent=p?'重新登入 Google':'登入 Google';
+  if(p){$('#googleIdentityName').textContent=p.name||p.email;$('#googleIdentityEmail').textContent=p.email||'';$('#googleIdentityBadge').textContent=connected()?'已連線':'已記住';$('#googleAvatarFallback').textContent=(p.name||p.email||'G')[0];$('#navAvatar').textContent=(p.name||p.email||'G')[0];$('#navName').textContent=p.name||'Google 使用者'}else{$('#navAvatar').textContent='○';$('#navName').textContent='本機模式'}
+  $('#googleStatus').textContent=p?(connected()?'帳號已連線，資料會在背景同步。':'帳號已記住，本機內容可使用；請重新授權以繼續同步。'):'尚未登入；可以先使用本機功能。';
+  $('#workspaceStatus').textContent=state.workspace?`${state.workspace.name||'共享行事曆'} · ${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace.role]||''} · ${state.members.length||'—'} 位成員`:'登入後可加入共享工作區。';
+  $('#workspaceMembers').innerHTML=state.members.map(m=>`<div class="workspace-member">${esc(m.name||m.email)}<small>${esc(m.email)} · ${{owner:'擁有者',editor:'編輯者',viewer:'唯讀'}[m.role]||''}</small></div>`).join('');$('#driveStatus').textContent=state.workspace?'共享資料夾已連線':state.driveRoot?'已記住資料夾，等待連線確認':'';$('#lastSync').textContent=formatDateTime(state.lastSync);
+  ['quickAddBtn','addEventBtn','addNoteBtn','saveItemBtn','deleteItemBtn','restoreBtn','addCategoryBtn'].forEach(id=>$('#'+id).disabled=!canEdit());$('#backupBtn').disabled=state.backingUp||state.saving||state.restoring||state.workspace?.role==='viewer';$('#syncBtn').disabled=state.syncing||state.restoring;$('#timezoneInput').disabled=state.workspace?.role==='viewer';renderCategories();
+}
+function renderCategories(){const box=$('#categoryList');box.innerHTML=state.categories.map((c,i)=>`<span class="category-chip">${esc(c)}<button data-category="${i}" aria-label="移除 ${esc(c)} 分類">×</button></span>`).join('');box.querySelectorAll('button').forEach(b=>{b.disabled=!canEdit();b.onclick=()=>task(async()=>{state.categories.splice(Number(b.dataset.category),1);await setMeta('categories',state.categories);renderCategories();await savePreferences()})})}
+async function addCategory(){if(!canEdit())return;const value=$('#newCategory').value.trim();if(!value)return;if(state.categories.includes(value)){toast('此分類已存在');return}state.categories.push(value.slice(0,40));$('#newCategory').value='';await setMeta('categories',state.categories);renderCategories();await savePreferences()}
+async function savePreferences(){await setMeta('preferencesPending',true);if(connected()&&state.workspace){await api('/api/settings',{method:'PUT',body:JSON.stringify({timezone:state.timezone,categories:state.categories})});await setMeta('preferencesPending',false);toast('設定已同步')}else await setMeta('preferencesPending',true)}
+async function updateQueueStatus(){const q=await listQueue();$('#queueCount').textContent=q.length;const box=$('#queueErrors');box.replaceChildren();for(const op of q.filter(x=>x.error).slice(0,5)){const p=document.createElement('p');p.textContent=`${op.item.title}：${friendly(new Error(op.error))}`;box.append(p);if(op.server){const keep=document.createElement('button');keep.textContent='保留雲端版本';keep.className='secondary';keep.onclick=()=>task(async()=>{await acknowledge(op,op.server);await loadLocal();renderAll();updateQueueStatus()});box.append(keep)}}return q.length;}
+function timeOptions(max,value){return Array.from({length:max+1},(_,i)=>`<option value="${i}"${i===value?' selected':''}>${String(i).padStart(2,'0')}</option>`).join('')}
+function dateTimeHtml(prefix,label,value,optional=false){const p=value?zonedParts(value,state.timezone):null;return `<section class="dt24-block"><div class="dt24-title">${label}<span class="format-24h">24 小時制</span></div><div class="dt24-date-field"><label for="${prefix}Date" class="dt24-label">日期${optional?'（可留空）':''}</label><input id="${prefix}Date" type="date" value="${p?dateKey(p.year,p.month,p.day):''}" ${optional?'':'required'}></div><div class="dt24-time-row"><div class="dt24-time-field"><label for="${prefix}Hour" class="dt24-label">時</label><select id="${prefix}Hour" aria-label="${label} 小時">${timeOptions(23,p?.hour??9)}</select></div><span class="dt24-colon">:</span><div class="dt24-time-field"><label for="${prefix}Minute" class="dt24-label">分</label><select id="${prefix}Minute" aria-label="${label} 分鐘">${timeOptions(59,p?.minute??0)}</select></div></div></section>`}
+function readDateTime(prefix,optional=false){const value=$('#'+prefix+'Date').value;if(!value&&optional)return null;if(!/^\d{4}-\d{2}-\d{2}$/.test(value))throw new Error('請設定有效日期');const [year,month,day]=value.split('-').map(Number);const d=fromZoned({year,month,day,hour:Number($('#'+prefix+'Hour').value),minute:Number($('#'+prefix+'Minute').value),second:0},state.timezone);if(!d)throw new Error('此時間在指定時區不存在，請調整日期或時間');return d.toISOString()}
+function setDateTime(prefix,value){const p=zonedParts(value,state.timezone);$('#'+prefix+'Date').value=dateKey(p.year,p.month,p.day);$('#'+prefix+'Hour').value=p.hour;$('#'+prefix+'Minute').value=p.minute;}
+function categoryHtml(value=''){return `<label for="fCategory">分類</label><div class="input-action"><input id="fCategory" list="categoryOptions" value="${esc(value)}" maxlength="40" placeholder="搜尋或輸入分類"><button id="editorNewCategory" type="button" class="secondary" aria-label="加入分類">＋</button></div><datalist id="categoryOptions">${state.categories.map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist>`}
+function safeAttachmentUrl(a){return /^[A-Za-z0-9_-]+$/.test(a.id||'')?`https://drive.google.com/file/d/${a.id}/view`:'#';}
+function attachmentsHtml(items){return `<div class="attachment-list" id="editorAttachments">${items.map(a=>`<div class="attachment">${icon('clip')}<a href="${safeAttachmentUrl(a)}" target="_blank" rel="noopener noreferrer">${esc(a.name||'附件')}</a><span class="meta">${bytes(a.size)}</span></div>`).join('')}</div><label for="fFiles">新增照片／附件</label><input class="upload-input" id="fFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"><p class="hint">文字先儲存；附件需要登入並連線。中斷時可重試。</p>`}
+async function openEditor(kind,item=null){
+  if(state.restoring||state.saving)return;
+  let draft=item?null:await getMeta('draft:'+kind,null);const restored=!!draft;if(draft)item=draft;
+  const now=zonedParts(new Date(),state.timezone),[year,month,day]=state.selected.split('-').map(Number);const start=fromZoned({year,month,day,hour:now.hour,minute:now.minute,second:0},state.timezone)||new Date();
+  const value=item?structuredClone(item):{id:crypto.randomUUID(),title:'',start_at:start.toISOString(),end_at:new Date(start.getTime()+3600000).toISOString(),reminder_minutes:[0],attachment_meta:[],created_at:new Date().toISOString(),revision:0};
+  state.editing={kind,item:value,existing:state[kind].some(x=>x.id===value.id),dirty:false};$('#editorTitle').textContent=(state.editing.existing?'編輯':'新增')+(kind==='events'?'行程':'備註');$('#saveItemBtn').textContent=kind==='events'?'儲存行程':'儲存備註';$('#deleteItemBtn').classList.toggle('hidden',!state.editing.existing);
+  let content=`<label for="fTitle">標題</label><input id="fTitle" maxlength="300" required value="${esc(value.title)}" placeholder="${kind==='events'?'行程名稱':'備註標題'}">`;
+  if(kind==='events')content+=`<div class="check-row"><label><input id="fAllDay" type="checkbox" ${value.all_day?'checked':''}>全天</label><label><input id="fCompleted" type="checkbox" ${value.completed?'checked':''}>已完成</label></div>${dateTimeHtml('fStart','開始',value.start_at)}${dateTimeHtml('fEnd','結束',value.all_day&&value.end_at?new Date(Date.parse(value.end_at)-1).toISOString():(value.end_at||new Date(Date.parse(value.start_at)+3600000).toISOString()))}${categoryHtml(value.category)}<label>提醒</label><div class="check-row">${[[0,'準時'],[10,'10 分鐘前'],[60,'1 小時前'],[1440,'1 天前'],[10080,'1 週前']].map(([n,t])=>`<label><input type="checkbox" name="reminder" value="${n}" ${(value.reminder_minutes||[]).includes(n)?'checked':''}>${t}</label>`).join('')}</div><details class="editor-section" ${value.repeat_rule||value.location||value.description?'open':''}><summary>更多選項</summary><label for="fRepeat">重複</label><select id="fRepeat"><option value="">不重複</option><option value="daily">每天</option><option value="weekly">每週</option><option value="monthly">每月</option><option value="yearly">每年</option></select><label for="fLocation">地點</label><input id="fLocation" maxlength="500" value="${esc(value.location)}"><label for="fDescription">說明</label><textarea id="fDescription" maxlength="30000">${esc(value.description)}</textarea></details>`;
+  else content+=`<label for="fContent">內容</label><textarea id="fContent" maxlength="60000" rows="6">${esc(value.content)}</textarea>${categoryHtml(value.category)}<label for="fTags">標籤（以逗號分隔）</label><input id="fTags" value="${esc((value.tags||[]).join(', '))}"><div class="check-row"><label><input id="fPinned" type="checkbox" ${value.pinned?'checked':''}>置頂</label><label><input id="fCompleted" type="checkbox" ${value.completed?'checked':''}>已完成</label></div>${dateTimeHtml('fReminderAt','提醒時間',value.reminder_at,true)}`;
+  $('#editorFields').innerHTML=content+attachmentsHtml(value.attachment_meta||[]);$('#uploadPanel').classList.add('hidden');
+  $('#editorNewCategory').onclick=()=>task(async()=>{const c=$('#fCategory').value.trim();if(!c)return;if(!state.categories.includes(c)){state.categories.push(c);await setMeta('categories',state.categories);renderCategories();await savePreferences();$('#categoryOptions').innerHTML=state.categories.map(c=>`<option value="${esc(c)}"></option>`).join('');toast('已加入分類')}});
+  if(kind==='events'){
+    $('#fRepeat').value=value.repeat_rule||'';let autoEnd=!state.editing.existing;
+    for(const suffix of ['Date','Hour','Minute']){$('#fStart'+suffix).addEventListener('change',()=>{if(autoEnd){try{setDateTime('fEnd',new Date(Date.parse(readDateTime('fStart'))+3600000))}catch{}}});$('#fEnd'+suffix).addEventListener('change',()=>{autoEnd=false})}
+    const toggle=()=>{const checked=$('#fAllDay').checked;for(const prefix of ['fStart','fEnd'])for(const part of ['Hour','Minute'])$('#'+prefix+part).disabled=checked};$('#fAllDay').onchange=toggle;toggle();
   }
-  $('#driveStatus').textContent=state.driveRoot?`Folder ID：${state.driveRoot}`:'尚未設定';
-  $('#pushStatus').textContent=('Notification'in window)?`通知權限：${Notification.permission}`:'此瀏覽器不支援通知';
-
-  const readOnly=state.workspace?.role==='viewer';
-  ['addEventBtn','addNoteBtn','quickAddBtn','backupBtn','restoreBtn'].forEach(id=>{const el=$(`#${id}`);if(el)el.disabled=!!readOnly});
-  if($('#saveItemBtn'))$('#saveItemBtn').disabled=!!readOnly;
-  if($('#deleteItemBtn'))$('#deleteItemBtn').disabled=!!readOnly;
+  $('#editorFields').oninput=()=>{state.editing.dirty=true;clearTimeout(draftTimer);draftTimer=setTimeout(()=>{task(persistDraft)},350)};
+  if(state.workspace?.role==='viewer')$('#editorFields').querySelectorAll('input,textarea,select,button').forEach(x=>x.disabled=true);
+  renderSettings();setupViewport();$('#editorDialog').showModal();$('#editorFields').scrollTop=0;if(restored)toast('已載入上次未完成的草稿');
 }
-
-function openEventEditor(item=null){
-  // 新增行程時以「現在」為開始時間；結束時間預設為開始時間 + 1 小時。
-  // 編輯既有行程時則保留原本的開始 / 結束時間。
-  const now=item?new Date(item.start_at):new Date();
-  const end=item?.end_at?new Date(item.end_at):new Date(now.getTime()+60*60*1000);
-  state.editing={kind:'events',item:item?structuredClone(item):null};
-  $('#editorTitle').textContent=item?'編輯行程':'新增行程';$('#deleteItemBtn').classList.toggle('hidden',!item);
-  // 新增行程預設勾選「準時」；編輯行程沿用原本設定。
-  const mins=item?.reminder_minutes??[0];
-  $('#editorFields').innerHTML=`
-    <label>標題<input id="fTitle" value="${attr(item?.title||'')}" required></label>
-    ${dateTime24Html('fStart','開始時間',now)}
-    ${dateTime24Html('fEnd','結束時間',end)}
-    <div class="check-row"><label><input id="fAllDay" type="checkbox" ${item?.all_day?'checked':''}>全天</label><label><input id="fCompleted" type="checkbox" ${item?.completed?'checked':''}>已完成</label></div>
-    <label>重複<select id="fRepeat"><option value="">不重複</option><option value="daily">每天</option><option value="weekly">每週</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label>
-    <label>分類<input id="fCategory" value="${attr(item?.category||'')}"></label>
-    <label>地點<input id="fLocation" value="${attr(item?.location||'')}"></label>
-    <label>說明<textarea id="fDescription">${esc(item?.description||'')}</textarea></label>
-    <label>提醒</label><div class="check-row">${[[0,'準時'],[10,'10 分鐘前'],[60,'1 小時前'],[1440,'1 天前'],[10080,'1 週前']].map(([v,l])=>`<label><input type="checkbox" name="reminder" value="${v}" ${mins.includes(v)?'checked':''}>${l}</label>`).join('')}</div>
-    ${attachmentsHtml(item?.attachment_meta||[])}
-    <label>新增照片 / 附件<input id="fFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"></label>
-  `;
-  $('#fRepeat').value=item?.repeat_rule||'';
-
-  // V1.6.1：所有時間改用 00–23 / 00–59 的自訂 24 小時選擇器，避免 iOS/Chrome 依系統地區切回 AM/PM。
-  // 新增行程時，只要尚未手動修改結束時間，變更開始時間就自動把結束時間調成 +1 小時。
-  if(!item){
-    let autoEnd=true;
-    const syncEnd=()=>{
-      if(!autoEnd)return;
-      const startDate=readDateTime24('fStart');
-      if(!startDate)return;
-      setDateTime24('fEnd',new Date(startDate.getTime()+60*60*1000));
-    };
-    bindDateTime24('fStart',syncEnd);
-    bindDateTime24('fEnd',()=>{autoEnd=false});
-  }
-
-  openAppDialog($('#editorDialog'));
+function readEditor(validate=true){
+  const ed=state.editing;if(!ed)return null;const title=$('#fTitle').value.trim();if(validate&&!title)throw new Error('請輸入標題');const item={...ed.item,title,category:$('#fCategory').value.trim(),completed:$('#fCompleted').checked,updated_at:new Date().toISOString(),deleted_at:null};
+  if(ed.kind==='events'){
+    item.start_at=readDateTime('fStart');item.end_at=readDateTime('fEnd');item.all_day=$('#fAllDay').checked;
+    if(item.all_day){const a=zonedParts(item.start_at,state.timezone),b=zonedParts(item.end_at,state.timezone);const dayEnd=new Date(Date.UTC(b.year,b.month-1,b.day+1));item.start_at=fromZoned({...a,hour:0,minute:0,second:0},state.timezone).toISOString();item.end_at=fromZoned({year:dayEnd.getUTCFullYear(),month:dayEnd.getUTCMonth()+1,day:dayEnd.getUTCDate(),hour:0,minute:0,second:0},state.timezone).toISOString();}
+    if(validate&&item.end_at<item.start_at)throw new Error('結束時間不可早於開始時間');item.repeat_rule=$('#fRepeat').value;item.location=$('#fLocation').value;item.description=$('#fDescription').value;item.reminder_minutes=$$('input[name="reminder"]:checked').map(x=>Number(x.value));
+  }else {item.content=$('#fContent').value;item.tags=$('#fTags').value.split(/[,，]/).map(x=>x.trim()).filter(Boolean);item.pinned=$('#fPinned').checked;item.reminder_at=readDateTime('fReminderAt',true)}
+  return item;
 }
-function openNoteEditor(item=null){
-  state.editing={kind:'notes',item:item?structuredClone(item):null};$('#editorTitle').textContent=item?'編輯備註':'新增備註';$('#deleteItemBtn').classList.toggle('hidden',!item);
-  $('#editorFields').innerHTML=`
-    <label>標題<input id="fTitle" value="${attr(item?.title||'')}" required></label>
-    <label>內容<textarea id="fContent">${esc(item?.content||'')}</textarea></label>
-    <label>分類<input id="fCategory" value="${attr(item?.category||'')}"></label>
-    <label>標籤（用逗號分隔）<input id="fTags" value="${attr((item?.tags||[]).join(', '))}"></label>
-    ${dateTime24Html('fReminderAt','提醒時間',item?.reminder_at?new Date(item.reminder_at):null,{allowEmpty:true,defaultHour:9,defaultMinute:0})}
-    <div class="check-row"><label><input id="fPinned" type="checkbox" ${item?.pinned?'checked':''}>置頂</label><label><input id="fCompleted" type="checkbox" ${item?.completed?'checked':''}>已完成</label></div>
-    ${attachmentsHtml(item?.attachment_meta||[])}
-    <label>新增照片 / 附件<input id="fFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"></label>
-  `;
-  bindOptionalDateTime24('fReminderAt');
-  openAppDialog($('#editorDialog'));
-}
-function attachmentsHtml(items){if(!items.length)return '<div class="hint">目前沒有附件。</div>';return `<div class="attachment-list">${items.map(a=>`<div class="attachment">${a.mimeType?.startsWith('image/')&&a.thumbnailLink?`<img class="attachment-thumb" src="${attr(a.thumbnailLink)}" alt="">`:'📎'} <a href="${attr(a.webViewLink||'#')}" target="_blank" rel="noopener">${esc(a.name||'附件')}</a><span class="meta">${formatBytes(a.size)}</span></div>`).join('')}</div>`}
-
+async function persistDraft(){if(!state.editing||!state.editing.dirty||state.saving)return;try{const item=readEditor(false);await setMeta('draft:'+state.editing.kind,item)}catch{/* Invalid partial time fields stay visible until corrected. */}}
+async function closeEditor(){if(state.saving){toast('正在儲存；可先取消附件上傳');return;}clearTimeout(draftTimer);await persistDraft();state.editing=null;document.activeElement?.blur();$('#editorDialog').close()}
 async function saveEditor(){
+  if(!canEdit()||!state.editing)return;const ed=state.editing;let item=readEditor(),textSaved=false;const files=[...$('#fFiles').files];state.saving=true;renderSettings();$('#editorCloseBtn').disabled=true;$('#editorCancelBtn').disabled=true;
   try{
-    if(state.workspace?.role==='viewer')throw new Error('READ_ONLY_MEMBER');
-    const ed=state.editing;if(!ed)return;const old=ed.item||{};const title=$('#fTitle').value.trim();if(!title){toast('請輸入標題');return}
-    const now=new Date().toISOString();const id=old.id||crypto.randomUUID();let item;
-    if(ed.kind==='events'){
-      const start=readDateTime24('fStart'),end=readDateTime24('fEnd');if(!start){toast('請設定開始時間');return}
-      if(end&&end.getTime()<start.getTime()){toast('結束時間不可早於開始時間');return}
-      item={...old,id,title,description:$('#fDescription').value,location:$('#fLocation').value,start_at:start.toISOString(),end_at:end?end.toISOString():null,all_day:$('#fAllDay').checked,category:$('#fCategory').value,color:old.color||'',completed:$('#fCompleted').checked,repeat_rule:$('#fRepeat').value,reminder_minutes:$$('input[name="reminder"]:checked').map(x=>Number(x.value)),attachment_meta:[...(old.attachment_meta||[])],revision:Number(old.revision||0),created_at:old.created_at||now,updated_at:now,deleted_at:null};
-    }else{
-      const rem=readDateTime24('fReminderAt',{allowEmpty:true});item={...old,id,title,content:$('#fContent').value,category:$('#fCategory').value,tags:$('#fTags').value.split(',').map(x=>x.trim()).filter(Boolean),pinned:$('#fPinned').checked,completed:$('#fCompleted').checked,reminder_at:rem?rem.toISOString():null,attachment_meta:[...(old.attachment_meta||[])],revision:Number(old.revision||0),created_at:old.created_at||now,updated_at:now,deleted_at:null};
+    item=await saveRemote(ed.kind,item);textSaved=true;ed.item=item;ed.existing=true;ed.dirty=false;await setMeta('draft:'+ed.kind,item);await loadLocal();renderAll();
+    if(files.length){
+      if(!navigator.onLine||!connected()||!state.workspace)throw new Error('文字已儲存；附件請在登入、連線並加入共享工作區後重試。');
+      state.folders=state.folders||await ensureAppFolders(state.driveRoot);const folder=await getOrCreateItemFolder(state.folders.attachments.id,item.id);uploadController=new AbortController();$('#uploadPanel').classList.remove('hidden');
+      for(let i=0;i<files.length;i++){
+        $('#uploadStatus').textContent=`${i+1}/${files.length} ${files[i].name}`;
+        const result=await uploadFile(files[i],folder.id,files[i].name,{signal:uploadController.signal,onProgress:(loaded,total)=>$('#uploadProgress').value=total?loaded/total*100:0});
+        item.attachment_meta.push({id:result.id,name:result.name,mimeType:result.mimeType,size:Number(result.size||files[i].size),webViewLink:result.webViewLink||'',createdTime:result.createdTime||new Date().toISOString()});
+        item=await saveRemote(ed.kind,item);ed.item=item;await setMeta('draft:'+ed.kind,item);
+      }
     }
-    const files=[...($('#fFiles')?.files||[])];if(files.length){item.attachment_meta.push(...await uploadAttachments(id,files));}
-    await dbPut(ed.kind,item);replaceStateItem(ed.kind,item);renderAll();closeAppDialog($('#editorDialog'));toast('已儲存');
-    if(getAccessToken()&&navigator.onLine){const saved=await saveRemote(ed.kind,item);replaceStateItem(ed.kind,saved);renderAll();}else{await saveRemote(ed.kind,item)}
-  }catch(e){console.error(e);toast(`儲存失敗：${friendlyError(e)}`)}
+    await setMeta('draft:'+ed.kind,null);state.editing=null;document.activeElement?.blur();$('#editorDialog').close();toast(connected()?'已儲存，準備同步':'已儲存在此裝置');
+  }catch(e){toast(textSaved?`文字已儲存。${friendly(e)}`:friendly(e));if(textSaved){$('#fFiles').value='';$('#editorAttachments').innerHTML=(item.attachment_meta||[]).map(a=>`<div class="attachment">${icon('clip')}<a href="${safeAttachmentUrl(a)}" target="_blank" rel="noopener noreferrer">${esc(a.name)}</a></div>`).join('')}}
+  finally{state.saving=false;uploadController=null;$('#uploadPanel').classList.add('hidden');$('#editorCloseBtn').disabled=false;$('#editorCancelBtn').disabled=false;await loadLocal();renderAll();await updateQueueStatus();if(connected())task(()=>syncAll(false));activateReadyUpdate()}
 }
-async function deleteEditorItem(){
-  const ed=state.editing;if(!ed?.item)return;if(!confirm(`確定刪除「${ed.item.title}」？\nGoogle Drive 已上傳附件不會自動刪除。`))return;
-  try{const tomb=await deleteRemote(ed.kind,ed.item);state[ed.kind]=state[ed.kind].filter(x=>x.id!==ed.item.id);renderAll();closeAppDialog($('#editorDialog'));toast('已刪除')}catch(e){toast(`刪除失敗：${friendlyError(e)}`)}
+async function deleteEditor(){if(!canEdit()||!state.editing?.existing)return;const ed=state.editing;if(!confirm(`刪除「${ed.item.title}」？已上傳的 Drive 附件會保留。`))return;await deleteRemote(ed.kind,ed.item);await setMeta('draft:'+ed.kind,null);ed.dirty=false;await closeEditor();await loadLocal();renderAll();updateQueueStatus();toast('刪除已儲存，連線後同步');if(connected())task(()=>syncAll(false))}
+async function onLogin(profile){
+  if(syncPromise)await syncPromise.catch(()=>{});if(state.saving||state.restoring)return;
+  state.profile=profile;state.workspace=null;state.folders=null;state.members=[];
+  await setScope(profile.sub,state.driveRoot);await loadLocal();renderAll();await connectWorkspace(true);
 }
-function replaceStateItem(kind,item){const arr=state[kind];const i=arr.findIndex(x=>x.id===item.id);if(item.deleted_at){if(i>=0)arr.splice(i,1);return}if(i>=0)arr[i]=item;else arr.push(item)}
-
-async function uploadAttachments(itemId,files){
-  if(!navigator.onLine)throw new Error('附件上傳需要網路連線');if(!getAccessToken())throw new Error('請先登入 Google');if(!state.driveRoot)throw new Error('請先在設定頁指定 Google Drive 共用資料夾');
-  const folders=state.driveFolders||await ensureAppFolders(state.driveRoot);state.driveFolders=folders;const itemFolder=await getOrCreateItemFolder(folders.attachments.id,itemId);const out=[];
-  for(const file of files){setStatus(`正在上傳 ${file.name}…`);const r=await uploadFile(file,itemFolder.id,file.name);out.push({id:r.id,name:r.name,mimeType:r.mimeType,size:Number(r.size||file.size),webViewLink:r.webViewLink||'',thumbnailLink:r.thumbnailLink||'',createdTime:r.createdTime||new Date().toISOString()})}
-  setStatus('附件上傳完成');return out;
+async function connectWorkspace(showToast=false){
+  if(connectionPromise)return connectionPromise;
+  connectionPromise=connectWorkspaceInner(showToast).finally(()=>{connectionPromise=null});return connectionPromise;
 }
-
-async function waitForGoogleIdentity(timeoutMs=8000){
-  const started=Date.now();while(!window.google?.accounts?.oauth2){if(Date.now()-started>timeoutMs)throw new Error('Google Identity Services 載入逾時');await new Promise(r=>setTimeout(r,120))}return true;
+async function connectWorkspaceInner(showToast=false){
+  if(!connected()||!navigator.onLine)return;status('正在連線共享工作區…');await refreshAccess();
+  let response=await api('/api/workspace/status');if(!response.joined&&state.driveRoot)response=await api('/api/workspace/join',{method:'POST',body:JSON.stringify({drive_root_folder_id:state.driveRoot})});
+  if(!response.joined){state.workspace=null;status('Google 已連線 · 請設定共享資料夾');renderSettings();return;}
+  state.workspace=response.workspace;state.driveRoot=response.workspace.drive_root_folder_id;state.folders=null;await setMeta('lastDriveRoot',state.driveRoot);$('#driveFolderInput').value=state.driveRoot;
+  await setScope(state.profile.sub,state.driveRoot);await migrateLegacy(legacy,state.profile,state.driveRoot);await loadLocal();
+  if(response.workspace.timezone){state.timezone=response.workspace.timezone;await setMeta('timezone',state.timezone)}
+  renderAll();await syncAll(false);await resumePush();if(!state.editing)task(()=>openDeepLink(location.href));if(showToast)toast('Google 已連線，共享資料已同步');
 }
-function initTokenClient(){
-  if(tokenClient)return tokenClient;if(!window.google?.accounts?.oauth2)throw new Error('Google Identity Services 尚未載入，請確認網路');
-  if(!cfg.GOOGLE_CLIENT_ID||cfg.GOOGLE_CLIENT_ID.startsWith('REPLACE_'))throw new Error('請先在 config.js 設定 GOOGLE_CLIENT_ID');
-  tokenClient=google.accounts.oauth2.initTokenClient({client_id:cfg.GOOGLE_CLIENT_ID,scope:cfg.GOOGLE_SCOPES,callback:async response=>{
-    const mode=tokenRequestMode;tokenRequestMode='manual';
-    if(response.error){state.authStatus=state.profile?'remembered':'signedOut';renderStatusPanels();if(mode!=='auto')toast(`Google 授權失敗：${response.error}`);else setStatus('Google 帳號已記住；Google 目前要求重新授權');return}
-    setAccessToken(response.access_token);const expiresAt=Date.now()+(Number(response.expires_in||3600)-60)*1000;state.authStatus='connected';await setMeta('googleSession',{token:response.access_token,expiresAt,profile:state.profile||null});await afterLogin(mode!=='auto');
-  },error_callback:error=>{const mode=tokenRequestMode;tokenRequestMode='manual';state.authStatus=state.profile?'remembered':'signedOut';renderStatusPanels();if(mode!=='auto')toast(`Google 授權視窗失敗：${error?.type||'unknown'}`)}});return tokenClient;
+async function joinFolder(){
+  if(state.saving||state.restoring||state.backingUp)throw new Error('請等待目前的儲存、還原或備份完成');
+  if(!connected())throw new Error('GOOGLE_LOGIN_REQUIRED');if(syncPromise)await syncPromise;
+  const root=extractFolderId($('#driveFolderInput').value);if(!root)throw new Error('請貼上有效的 Google Drive 共用資料夾連結');
+  const r=await api('/api/workspace/join',{method:'POST',body:JSON.stringify({drive_root_folder_id:root})});if(!r.joined)throw new Error('未能加入共享工作區');state.driveRoot=root;state.workspace=null;await setMeta('lastDriveRoot',root);await connectWorkspace(true);
 }
-async function googleLogin(){try{await waitForGoogleIdentity();tokenRequestMode='manual';initTokenClient().requestAccessToken({prompt:'',login_hint:state.profile?.email||''})}catch(e){toast(friendlyError(e))}}
-async function restorePersistentGoogleSession(){
-  try{
-    let saved=await getMeta('googleSession',null);
-    if(!saved){const legacy=JSON.parse(sessionStorage.getItem('googleToken')||'null');if(legacy?.token&&legacy.expiresAt>Date.now()){saved={...legacy,profile:null};await setMeta('googleSession',saved)}}
-    if(!saved)return;state.profile=saved.profile||null;
-    if(saved.token&&Number(saved.expiresAt)>Date.now()){setAccessToken(saved.token);state.authStatus='connected'}
-    else{setAccessToken('');state.authStatus=state.profile?'remembered':'signedOut';await setMeta('googleSession',{token:'',expiresAt:0,profile:state.profile||null})}
-  }catch(e){console.warn('restore Google session failed',e)}
+async function signOut(){
+  if(state.saving||state.restoring||state.backingUp){toast('請等待目前的儲存、還原或備份完成');return}if(syncPromise)await syncPromise.catch(()=>{});
+  const count=await updateQueueStatus();if(count&&!confirm(`尚有 ${count} 個項目未同步。登出會保留在此帳號的本機資料區，下次登入同帳號才會繼續同步。確定登出？`))return;
+  await disconnectPush().catch(()=>{});await logout();state.profile=null;state.workspace=null;state.members=[];state.folders=null;await setScope();await loadLocal();renderAll();await updateQueueStatus();status('已登出 · 本機模式');
 }
-async function autoReconnectGoogle(){
-  if(getAccessToken()||!state.profile||!navigator.onLine)return;state.authStatus='reconnecting';renderStatusPanels();setStatus(`正在自動連線 Google：${state.profile.email||state.profile.name||''}`);
-  try{await waitForGoogleIdentity();tokenRequestMode='auto';initTokenClient().requestAccessToken({prompt:'none',login_hint:state.profile.email||''})}catch(e){tokenRequestMode='manual';state.authStatus='remembered';renderStatusPanels();setStatus('Google 帳號已記住；需要時可按登入重新授權')}
+async function syncAll(manual=false){
+  if(syncPromise)return syncPromise;if(state.restoring)return;
+  if(connected()&&navigator.onLine&&!state.workspace)return connectWorkspace(manual);
+  syncPromise=(async()=>{
+    if(!connected()){if(manual)throw new Error('GOOGLE_LOGIN_REQUIRED');return}if(!navigator.onLine){if(manual)toast('目前離線，修改會保留在此裝置');return}
+    state.syncing=true;renderSettings();status('正在同步…');
+    try{
+      await refreshAccess();const result=await flushQueue();const since=await getMeta('lastSync',null);const data=await api(`/api/sync${since!==null?'?since='+encodeURIComponent(since):''}`);
+      await applyRemote(data.events||[],data.notes||[],data.cursor??data.serverTime);await setMeta('lastSyncAt',data.serverTime);
+      const prefsPending=await getMeta('preferencesPending',false);
+      if(!prefsPending&&data.settings?.timezone){state.timezone=data.settings.timezone;await setMeta('timezone',state.timezone)}
+      if(prefsPending&&canEdit()){await savePreferences();await setMeta('preferencesPending',false)}else if(data.settings?.categories){state.categories=data.settings.categories;await setMeta('categories',state.categories)}
+      if(data.workspace)state.workspace=data.workspace;
+      if(Date.now()-lastMembersAt>300000){const members=await api('/api/workspace/members');state.members=members.members||[];lastMembersAt=Date.now()}
+      await loadLocal();renderAll();const remaining=await updateQueueStatus();status(remaining?`已儲存 · ${remaining} 項待處理`:'已同步');if(manual)toast(result.conflicts?'已保留衝突副本，請查看同步狀態。':remaining?`${remaining} 個項目待同步或處理衝突`:'同步完成');
+    }catch(e){status('同步未完成 · 本機修改已保留');await updateQueueStatus();renderSettings();throw e}
+    finally{state.syncing=false;renderSettings();}
+  })().finally(()=>{syncPromise=null});return syncPromise;
 }
-async function afterLogin(showToast=true){
-  try{
-    state.profile=await fetchGoogleProfile();state.authStatus='connected';
-    const saved=await getMeta('googleSession',{});await setMeta('googleSession',{token:getAccessToken(),expiresAt:Number(saved?.expiresAt||Date.now()+50*60*1000),profile:state.profile});
-    renderStatusPanels();setStatus(`Google：${state.profile.email||state.profile.name}`);
-    const joined=await ensureWorkspaceConnection(true);
-    if(joined){await syncAll(false);if(state.driveRoot&&state.workspace?.role!=='viewer'){try{await verifyFolder(state.driveRoot);state.driveFolders=await ensureAppFolders(state.driveRoot);$('#driveStatus').textContent='Google Drive 已連線'}catch(e){$('#driveStatus').textContent=`Drive：${friendlyError(e)}`}}}
-    else setStatus('Google 已登入；等待加入共享工作區');
-    if(showToast)toast(joined?'Google 登入成功，已連線共享工作區':'Google 登入成功，請設定共享資料夾');
-  }catch(e){
-    console.error(e);
-    if(String(e.message).includes('已失效')||e.status===401||String(e.message).includes('401')){setAccessToken('');state.authStatus=state.profile?'remembered':'signedOut';await setMeta('googleSession',{token:'',expiresAt:0,profile:state.profile||null});renderStatusPanels();setStatus('Google 帳號已記住，但授權已到期');if(showToast)toast('Google 授權已到期，請重新授權');return}
-    if(showToast)toast(`登入後同步失敗：${friendlyError(e)}`);
-  }
-}
-
-async function ensureWorkspaceConnection(autoJoin=true){
-  if(!getAccessToken())return false;
-  try{
-    let result=await api('/api/workspace/status');
-    if(!result.joined&&autoJoin&&state.driveRoot){
-      result=await api('/api/workspace/join',{method:'POST',body:JSON.stringify({drive_root_folder_id:state.driveRoot})});
-    }
-    if(!result.joined){state.workspace=null;state.workspaceMembers=[];renderStatusPanels();return false}
-    const previousId=await getMeta('workspaceSyncId','');
-    state.workspace=result.workspace||null;
-    if(state.workspace?.drive_root_folder_id){state.driveRoot=state.workspace.drive_root_folder_id;await setMeta('driveRoot',state.driveRoot);$('#driveFolderInput').value=state.driveRoot}
-    if(state.workspace?.timezone){$('#timezoneInput').value=state.workspace.timezone;await setMeta('timezone',state.workspace.timezone)}
-    if(previousId!==state.workspace?.id){state.lastSync='1970-01-01T00:00:00.000Z';await setMeta('lastSync',state.lastSync);await setMeta('workspaceSyncId',state.workspace?.id||'')}
-    await loadWorkspaceMembers();renderStatusPanels();return true;
-  }catch(e){
-    if(e.message==='WORKSPACE_REQUIRED'){state.workspace=null;state.workspaceMembers=[];renderStatusPanels();return false}
-    throw e;
-  }
-}
-
-async function loadWorkspaceMembers(){
-  if(!getAccessToken()||!state.workspace){state.workspaceMembers=[];return}
-  try{const r=await api('/api/workspace/members');state.workspaceMembers=r.members||[]}catch(e){console.warn('workspace members failed',e);state.workspaceMembers=[]}
-}
-
-async function fetchGoogleProfile(){const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${getAccessToken()}`}});if(!r.ok)throw new Error('Google token 已失效');return r.json()}
-async function googleLogout(){const t=getAccessToken();if(t&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(t,()=>{});setAccessToken('');sessionStorage.removeItem('googleToken');await setMeta('googleSession',null);state.profile=null;state.authStatus='signedOut';state.workspace=null;state.workspaceMembers=[];renderStatusPanels();setStatus('已登出 Google');toast('已登出')}
-
-async function syncAll(manual=true){
-  if(!getAccessToken()){if(manual)toast('請先登入 Google');return}if(!navigator.onLine){if(manual)toast('目前離線');return}
-  if(!state.workspace){const joined=await ensureWorkspaceConnection(true);if(!joined){if(manual)toast('請先加入共享工作區');return}}
-  $('#syncBtn').disabled=true;setStatus('同步共享資料中…');
-  try{
-    await flushQueue();const since=await getMeta('lastSync','1970-01-01T00:00:00.000Z');const data=await api(`/api/sync?since=${encodeURIComponent(since)}`);
-    for(const e of data.events||[]){await dbPut('events',e);replaceStateItem('events',e)}for(const n of data.notes||[]){await dbPut('notes',n);replaceStateItem('notes',n)}
-    if(data.workspace)state.workspace=data.workspace;
-    if(data.settings?.drive_root_folder_id){state.driveRoot=data.settings.drive_root_folder_id;await setMeta('driveRoot',state.driveRoot);$('#driveFolderInput').value=state.driveRoot}
-    if(data.settings?.timezone){$('#timezoneInput').value=data.settings.timezone;await setMeta('timezone',data.settings.timezone)}
-    state.lastSync=data.serverTime||new Date().toISOString();await setMeta('lastSync',state.lastSync);await loadWorkspaceMembers();renderAll();updateSyncLabel();setStatus('共享資料同步完成');if(manual)toast('共享資料同步完成');
-  }catch(e){console.error(e);if(e.message==='WORKSPACE_REQUIRED'){state.workspace=null;state.workspaceMembers=[];renderStatusPanels()}setStatus(`同步失敗：${friendlyError(e)}`);if(manual)toast(`同步失敗：${friendlyError(e)}`)}finally{$('#syncBtn').disabled=false}
-}
-async function saveSettingsRemote(){if(!getAccessToken()||!state.workspace)return;await api('/api/settings',{method:'PUT',body:JSON.stringify({drive_root_folder_id:state.driveRoot||'',timezone:$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE})})}
-
-async function verifyAndSaveDrive(){
-  try{
-    if(!getAccessToken())throw new Error('請先登入 Google');
-    const id=extractFolderId($('#driveFolderInput').value);if(!id)throw new Error('無法辨識 Google Drive Folder ID');
-    setStatus('正在驗證共享工作區與 Google Drive 權限…');
-    const joined=await api('/api/workspace/join',{method:'POST',body:JSON.stringify({drive_root_folder_id:id})});
-    state.workspace=joined.workspace;state.driveRoot=id;await setMeta('driveRoot',id);$('#driveFolderInput').value=id;
-    if(state.workspace?.role!=='viewer'){const info=await verifyFolder(id);state.driveFolders=await ensureAppFolders(id);$('#driveStatus').textContent=`已連線：${info.name} (${id})`}
-    else{$('#driveStatus').textContent=`已連線共享資料夾（唯讀） (${id})`}
-    state.lastSync='1970-01-01T00:00:00.000Z';await setMeta('lastSync',state.lastSync);await setMeta('workspaceSyncId',state.workspace?.id||'');
-    await loadWorkspaceMembers();renderStatusPanels();await saveSettingsRemote();await syncAll(false);
-    toast(`已加入共享工作區（${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace?.role]||state.workspace?.role}）`);setStatus('共享工作區已連線');
-  }catch(e){console.error(e);$('#driveStatus').textContent=`失敗：${friendlyError(e)}`;toast(`共享工作區設定失敗：${friendlyError(e)}`)}
-}
+function makeBackup(){return {schema:2,appVersion:cfg.VERSION,createdAt:new Date().toISOString(),timezone:state.timezone,events:state.events,notes:state.notes,settings:{driveRoot:state.workspace?state.driveRoot:'',categories:state.categories}}}
+function downloadBackup(data,prefix){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${prefix}-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}
 async function backupNow(){
-  try{if(!getAccessToken())throw new Error('請先登入 Google');if(!state.driveRoot)throw new Error('請先設定 Google Drive 共用資料夾');const folders=state.driveFolders||await ensureAppFolders(state.driveRoot);state.driveFolders=folders;const payload={schema:1,appVersion:cfg.VERSION,createdAt:new Date().toISOString(),timezone:$('#timezoneInput').value.trim()||cfg.DEFAULT_TIMEZONE,events:state.events,notes:state.notes,settings:{driveRoot:state.driveRoot}};const stamp=new Date().toISOString().replace(/[:.]/g,'-');await uploadJson(payload,folders.backups.id,`backup-${stamp}.json`);toast('備份已上傳 Google Drive')}catch(e){console.error(e);toast(`備份失敗：${friendlyError(e)}`)}
+  if(state.backingUp)return;
+  if(!state.workspace)throw new Error('WORKSPACE_REQUIRED');state.backingUp=true;$('#backupBtn').disabled=true;$('#backupStatus').textContent='正在確認同步與備份內容…';
+  try{await syncAll(false);if((await listQueue()).length)throw new Error('尚有待同步或衝突項目，請先處理後再備份。');state.folders=state.folders||await ensureAppFolders(state.driveRoot);await uploadJson(makeBackup(),state.folders.backups.id,`backup-${new Date().toISOString().replace(/[:.]/g,'-')}.json`);$('#backupStatus').textContent='備份已上傳 Google Drive · '+formatDateTime(new Date());toast('備份完成')}finally{state.backingUp=false;$('#backupBtn').disabled=false;activateReadyUpdate()}
 }
-async function restoreLatestBackup(){
+function validateBackup(data){if(!data||![1,2].includes(data.schema)||!Array.isArray(data.events)||!Array.isArray(data.notes))throw new Error('備份格式不正確');if(data.events.length+data.notes.length>2000)throw new Error('單次還原最多 2,000 筆記錄');for(const kind of ['events','notes']){const ids=new Set();for(const x of data[kind]){if(!x||typeof x.id!=='string'||!x.id||typeof x.title!=='string'||!x.title.trim()||ids.has(x.id))throw new Error('備份有無效或重複的記錄');ids.add(x.id);if(kind==='events'&&!Number.isFinite(Date.parse(x.start_at)))throw new Error('備份含無效行程日期');if(x.end_at&&!Number.isFinite(Date.parse(x.end_at))||x.reminder_at&&!Number.isFinite(Date.parse(x.reminder_at)))throw new Error('備份含無效提醒日期')}}}
+async function previewCloudRestore(){if(!state.workspace)throw new Error('WORKSPACE_REQUIRED');state.folders=state.folders||await ensureAppFolders(state.driveRoot);const backups=await listLatestBackups(state.folders.backups.id);if(!backups.length)throw new Error('尚未找到備份');if(Number(backups[0].size)>1500000)throw new Error('備份超過安全還原上限（約 1.5 MB）');const data=await downloadJson(backups[0].id);await previewRestore(data,backups[0].name)}
+async function previewRestore(data,name){
+  if(!canEdit())return;validateBackup(data);if(state.workspace&&data.settings?.driveRoot&&data.settings.driveRoot!==state.driveRoot)throw new Error('WORKSPACE_FOLDER_MISMATCH');
+  let snapshot=null;if(state.workspace){await syncAll(false);if((await listQueue()).length)throw new Error('請先處理待同步項目後再還原');snapshot=await api('/api/snapshot')}
+  pendingRestore={data,name,generation:snapshot?.generation,scope:getScope()};const old=new Set([...state.events,...state.notes].map(x=>x.id)),items=[...data.events,...data.notes].filter(x=>!x.deleted_at),ids=new Set(items.map(x=>x.id));$('#restoreInfo').textContent=`${name}\n${data.events.filter(x=>!x.deleted_at).length} 個行程、${data.notes.filter(x=>!x.deleted_at).length} 則備註。新增 ${items.filter(x=>!old.has(x.id)).length} 筆，取代 ${items.filter(x=>old.has(x.id)).length} 筆，移除 ${[...old].filter(x=>!ids.has(x)).length} 筆。`;$('#restoreProgress').textContent='';$('#restoreDialog').showModal();
+}
+function closeRestore(){if(state.restoring)return;pendingRestore=null;$('#restoreDialog').close();activateReadyUpdate()}
+async function confirmRestore(){
+  if(!pendingRestore||state.restoring)return;if(pendingRestore.scope!==getScope())throw new Error('ACCOUNT_CHANGED');const pending=pendingRestore;
+  if(syncPromise)await syncPromise;state.restoring=true;renderSettings();$('#restoreConfirmBtn').disabled=true;$('#restoreCancelBtn').disabled=true;$('#restoreCloseBtn').disabled=true;
   try{
-    if(!getAccessToken())throw new Error('請先登入 Google');
-    if(!state.driveRoot)throw new Error('請先設定 Google Drive 共用資料夾');
-    const folders=state.driveFolders||await ensureAppFolders(state.driveRoot);state.driveFolders=folders;
-    const files=await listLatestBackups(folders.backups.id);if(!files.length)throw new Error('Backups 資料夾內沒有備份');
-    const latest=files[0];if(!confirm(`要還原最新備份？\n${latest.name}\n目前雲端資料會以此備份內容為準。`))return;
-    const data=await downloadJson(latest.id);if(!Array.isArray(data.events)||!Array.isArray(data.notes))throw new Error('備份格式不正確');
-    await syncAll(false); // 先拿到最新 revision，避免用舊版本覆寫。
-    const currentEvents=new Map(state.events.map(x=>[x.id,x]));const currentNotes=new Map(state.notes.map(x=>[x.id,x]));
-    const backupEventIds=new Set(data.events.map(x=>x.id));const backupNoteIds=new Set(data.notes.map(x=>x.id));
-    for(const x of state.events.filter(x=>!backupEventIds.has(x.id)))await deleteRemote('events',x);
-    for(const x of state.notes.filter(x=>!backupNoteIds.has(x.id)))await deleteRemote('notes',x);
-    await dbClear('events');await dbClear('notes');state.events=[];state.notes=[];
-    for(const src of data.events){const e={...src,revision:Number(currentEvents.get(src.id)?.revision||0),updated_at:new Date().toISOString(),deleted_at:null};const saved=await saveRemote('events',e);await dbPut('events',saved);state.events.push(saved)}
-    for(const src of data.notes){const n={...src,revision:Number(currentNotes.get(src.id)?.revision||0),updated_at:new Date().toISOString(),deleted_at:null};const saved=await saveRemote('notes',n);await dbPut('notes',saved);state.notes.push(saved)}
-    state.lastSync=new Date().toISOString();await setMeta('lastSync',state.lastSync);renderAll();updateSyncLabel();toast(`已還原 ${latest.name}`);
-  }catch(e){console.error(e);toast(`還原失敗：${friendlyError(e)}`)}
+    const recovery=makeBackup();await setMeta('recoveryBackup',recovery);downloadBackup(recovery,'before-restore');$('#restoreProgress').textContent='正在還原，請保留此畫面…';
+    if(state.workspace){const result=await api('/api/restore',{method:'POST',body:JSON.stringify({backup:pending.data,expectedGeneration:pending.generation})});await replaceSnapshot(result.events,result.notes,result.cursor);await setMeta('lastSyncAt',result.serverTime);}
+    else {await replaceSnapshot(pending.data.events.filter(x=>!x.deleted_at),pending.data.notes.filter(x=>!x.deleted_at),null);}
+    if(validTimezone(pending.data.timezone||''))await setMeta('timezone',pending.data.timezone);if(Array.isArray(pending.data.settings?.categories))await setMeta('categories',pending.data.settings.categories);
+    await loadLocal();renderAll();pendingRestore=null;$('#restoreDialog').close();toast('還原完成；還原前資料已保存為復原備份');
+  }catch(e){$('#restoreProgress').textContent=`${friendly(e)} 若連線在回應前中斷，請先重新同步確認結果，再重新預覽。`;throw e}
+  finally{state.restoring=false;$('#restoreConfirmBtn').disabled=false;$('#restoreCancelBtn').disabled=false;$('#restoreCloseBtn').disabled=false;renderSettings();await updateQueueStatus();activateReadyUpdate()}
 }
+async function resumePush(){if(!state.workspace)return;const sub=await subscriptionState();if(sub.subscription&&sub.permission==='granted')await enablePush({requestPermission:false});await refreshPush()}
+async function refreshPush(){const info=await subscriptionState();$('#pushStatus').textContent=info.supported?(info.permission==='denied'?'通知已封鎖，請至瀏覽器或系統設定允許。':info.subscription?'此裝置已訂閱通知':info.permission==='granted'?'已允許通知，尚未完成此裝置訂閱':'尚未啟用通知'):'此環境未提供 Web Push；iPhone／iPad 請由加入主畫面的 App 開啟。';if(connected()&&state.workspace){try{const r=await api('/api/push/diagnostics');$('#pushDiagnostics').textContent=`伺服器設定：${r.configured?'完成':'尚未完成'}；帳號裝置 ${r.devices.length} 個。${r.deliveries.map(x=>`${{accepted:'服務已接受',retry:'等待重試',sending:'處理中',gone:'訂閱失效'}[x.status]||x.status} ${x.n}`).join('、')}。系統勿擾、通知摘要或權限可能影響畫面顯示。`}catch(e){$('#pushDiagnostics').textContent=friendly(e)}}}
+function setupViewport(){
+  const viewport=window.visualViewport;const height=viewport?.height||innerHeight;document.documentElement.style.setProperty('--dialog-height',height+'px');document.documentElement.style.setProperty('--dialog-top',(viewport?.offsetTop||0)+'px');
+  // The shell fills the layout viewport; only the editor follows the on-screen keyboard.
+  if(!$('#editorDialog').open)document.documentElement.style.setProperty('--app-height',innerHeight+'px');
+}
+addEventListener('resize',setupViewport);window.visualViewport?.addEventListener('resize',setupViewport);window.visualViewport?.addEventListener('scroll',setupViewport);
+async function registerWorker(){
+  if(!('serviceWorker' in navigator))return;
+  registration=await navigator.serviceWorker.register('./service-worker.js',{scope:'./',updateViaCache:'none'});
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!sessionStorage.getItem('calendar-update-reloading')){sessionStorage.setItem('calendar-update-reloading','1');location.reload()}});
+  navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type==='OPEN_ITEM')openDeepLink(e.data.url)});
+  registration.addEventListener('updatefound',()=>{const worker=registration.installing;worker?.addEventListener('statechange',()=>{if(worker.state==='installed')activateReadyUpdate()})});
+  if(!navigator.serviceWorker.controller&&registration.waiting)registration.waiting.postMessage({type:'ACTIVATE_UPDATE'});
+  activateReadyUpdate();
+}
+async function checkUpdate(silent=false,force=false){
+  if(updatePromise)return updatePromise;
+  updatePromise=(async()=>{
+    const r=await fetch(`./version.json?t=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(12000)});if(!r.ok)throw new Error('版本資訊暫時無法取得');const v=await r.json();$('#latestVersion').textContent=v.version||'未知';
+    if(v.version===cfg.VERSION&&!force){sessionStorage.removeItem('calendar-update-reloading');sessionStorage.removeItem('calendar-update-target');$('#updateStatus').textContent='目前已是最新版本；啟動時會自動檢查。';if(!silent)toast('目前已是最新版本');return;}
+    if(Number(v.build)<Number(cfg.BUILD)){if(!silent)toast('伺服器版本較舊，已保留目前版本');return;}
+    if(sessionStorage.getItem('calendar-update-target')===v.version&&v.version!==cfg.VERSION){$('#updateStatus').textContent='已偵測到更新，但部分檔案尚未一致；稍後再檢查。';return;}
+    waitingVersion=v.version;if(!registration)await registerWorker();if(!registration)throw new Error('此瀏覽器無法自動更新');
+    $('#updateStatus').textContent='正在準備新版本…';await registration.update();
+    if(force&&v.version===cfg.VERSION){if(state.editing||state.saving||state.restoring){toast('請先完成編輯或上傳後重試');return;}const name=`calendar-notes:${new URL('./',location.href).pathname}:${cfg.VERSION}`;const cache=await caches.open(name);const paths=Object.keys(v.assets||{});if(!paths.length)throw new Error('版本檔案缺少完整性資訊');const downloads=await Promise.all(paths.map(async path=>{const response=await fetch(path,{cache:'reload',signal:AbortSignal.timeout(15000)});if(!response.ok)throw new Error('程式檔案下載未完成');const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await response.clone().arrayBuffer()))).map(n=>n.toString(16).padStart(2,'0')).join('');if(digest!==v.assets[path])throw new Error('程式檔案尚未發布完整，已保留目前版本');return [path,response]}));for(const [path,response] of downloads)await cache.put(path,response);location.reload();return;}
+    activateReadyUpdate();
+  })().catch(e=>{$('#latestVersion').textContent='暫時無法檢查';$('#updateStatus').textContent='離線時可繼續使用；連線後會再次檢查。';if(!silent)throw e}).finally(()=>{updatePromise=null});return updatePromise;
+}
+function activateReadyUpdate(){
+  if(!registration?.waiting)return;
+  if(state.editing||state.saving||state.restoring||state.backingUp||$('#quickDialog').open||$('#restoreDialog').open){$('#updateStatus').textContent='新版本已準備完成；結束編輯後自動更新。';return;}
+  if(waitingVersion){sessionStorage.setItem('calendar-update-target',waitingVersion);sessionStorage.removeItem('calendar-update-reloading')}
+  registration.waiting.postMessage({type:'ACTIVATE_UPDATE'});
+}
+async function openDeepLink(value){try{const u=new URL(value,location.href);if(u.searchParams.get('new')){await openEditor(u.searchParams.get('new')==='note'?'notes':'events');history.replaceState(null,'',new URL('./',location.href));return;}const kind=u.searchParams.get('open'),id=u.searchParams.get('id');if(!id||!['event','note'].includes(kind))return;const table=kind==='event'?'events':'notes';let item=state[table].find(x=>x.id===id);if(!item&&connected()){await (state.workspace?syncAll(false):connectWorkspace(false));item=state[table].find(x=>x.id===id)}if(item){if(state.editing){toast('提醒已開啟，請先完成目前的編輯');return}if(table==='notes')showView('notes');await openEditor(table,item)}}catch(e){toast(friendly(e))}}
+boot().catch(e=>{console.error(e);status('啟動未完成');toast(friendly(e))});
 
-async function enableNotifications(){try{if(!getAccessToken())throw new Error('請先登入 Google');await enablePush();renderStatusPanels();toast('通知已啟用')}catch(e){console.error(e);toast(`通知設定失敗：${friendlyError(e)}`)}}
-async function sendTestPush(){try{if(Notification.permission!=='granted')throw new Error('請先啟用通知');const r=await testPush();toast(r.sent?`已送出 ${r.sent} 個測試通知`:'沒有可用的 Push Subscription，請重新啟用通知')}catch(e){toast(`測試通知失敗：${friendlyError(e)}`)}}
-
-async function registerServiceWorker(){if('serviceWorker'in navigator){try{await navigator.serviceWorker.register(`./service-worker.js?v=${encodeURIComponent(cfg.VERSION)}`,{scope:'./',updateViaCache:'none'});navigator.serviceWorker.addEventListener('message',ev=>{if(ev.data?.type==='SW_UPDATED')toast('新版本已準備完成')})}catch(e){console.warn('SW registration failed',e)}}}
-async function checkUpdate(silent=false){
-  try{
-    const res=await fetch(`./version.json?t=${Date.now()}`,{cache:'no-store'});const v=await res.json();$('#latestVersion').textContent=v.version||'未知';
-    if(v.version&&v.version!==cfg.VERSION){
-      const attempted=sessionStorage.getItem('updateAttempted');
-      if(attempted===v.version){toast(`版本 ${v.version} 已偵測到，但檔案可能尚未完全更新`);return}
-      sessionStorage.setItem('updateAttempted',v.version);toast(`發現新版本 ${v.version}，正在更新…`);await forceUpdate();
-    }else{sessionStorage.removeItem('updateAttempted');if(!silent)toast('目前已是最新版本')}
-  }catch(e){$('#latestVersion').textContent='檢查失敗';if(!silent)toast('版本檢查失敗')}
+async function importGuest(){
+ if(!state.workspace||!canEdit())throw new Error('WORKSPACE_REQUIRED');const data=await guestRecords();const n=data.events.length+data.notes.length;if(!n){toast('本機模式沒有可匯入的內容');return;}
+ if(!confirm(`將本機模式的 ${n} 筆內容複製到目前帳號的共享工作區？原本本機資料仍會保留。`))return;
+ for(const kind of ['events','notes'])for(const src of data[kind]){const id='guest-'+src.id;if(state[kind].some(x=>x.id===id))continue;await saveRemote(kind,{...src,id,revision:0});}
+ await loadLocal();renderAll();await syncAll(true);
 }
-async function forceUpdate(){
-  try{
-    // 只處理本 PWA，避免更新或刪除同一 github.io 網域下其他 PWA 的 Service Worker / Cache。
-    if('caches'in window){const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith('calendar-notes-pwa-')).map(k=>caches.delete(k)))}
-    if('serviceWorker'in navigator){
-      const reg=await navigator.serviceWorker.register(`./service-worker.js?v=${encodeURIComponent(cfg.VERSION)}&t=${Date.now()}`,{scope:'./',updateViaCache:'none'});
-      try{await reg.update()}catch(err){console.warn('Current app SW update skipped',err)}
-    }
-    sessionStorage.removeItem('updateAttempted');
-    const u=new URL(location.href);u.searchParams.set('_refresh',Date.now());location.replace(u.toString());
-  }catch(e){toast(`更新失敗：${friendlyError(e)}`)}
+async function recoverRestore(){
+ if(state.workspace){const r=await api('/api/restore/history');if(!r.history.length)throw new Error('沒有伺服器復原備份');const data=await api('/api/restore/history/'+encodeURIComponent(r.history[0].id));await previewRestore(data,'還原前復原備份 '+formatDateTime(r.history[0].created_at));}
+ else{const data=await getMeta('recoveryBackup',null);if(!data)throw new Error('沒有本機復原備份');await previewRestore(data,'上次還原前的本機備份');}
 }
-
-function handleDeepLink(){const u=new URL(location.href);const kind=u.searchParams.get('open'),id=u.searchParams.get('id');if(kind==='event'&&id){const e=state.events.find(x=>x.id===id);if(e)openEventEditor(e)}if(kind==='note'&&id){const n=state.notes.find(x=>x.id===id);if(n){showView('notes');openNoteEditor(n)}}}
-function eventsForDate(key){return state.events.filter(e=>!e.deleted_at&&occursOnDate(e,key))}
-function occursOnDate(e,key){
-  const start=new Date(e.start_at);if(!e.repeat_rule)return dateKey(start)===key;const target=parseDateKey(key);const base=new Date(start.getFullYear(),start.getMonth(),start.getDate());if(target<base)return false;const days=Math.floor((target-base)/86400000);
-  if(e.repeat_rule==='daily')return true;if(e.repeat_rule==='weekly')return days%7===0;if(e.repeat_rule==='monthly')return target.getDate()===base.getDate();if(e.repeat_rule==='yearly')return target.getMonth()===base.getMonth()&&target.getDate()===base.getDate();return false;
-}
-function dateKey(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
-function parseDateKey(k){const [y,m,d]=k.split('-').map(Number);return new Date(y,m-1,d)}
-function isoWeekNumber(d){const x=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=x.getUTCDay()||7;x.setUTCDate(x.getUTCDate()+4-day);const yearStart=new Date(Date.UTC(x.getUTCFullYear(),0,1));return Math.ceil((((x-yearStart)/86400000)+1)/7)}
-function localDateValue(d){const z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`}
-function timeOptionHtml(max,selected){let out='';for(let i=0;i<=max;i++){const v=String(i).padStart(2,'0');out+=`<option value="${v}" ${i===selected?'selected':''}>${v}</option>`}return out}
-function dateTime24Html(prefix,label,date,opts={}){
-  const valid=date instanceof Date&&!Number.isNaN(date.getTime());
-  const allowEmpty=!!opts.allowEmpty;
-  const h=valid?date.getHours():Number(opts.defaultHour??0);
-  const m=valid?date.getMinutes():Number(opts.defaultMinute??0);
-  return `<section class="dt24-block" data-prefix="${attr(prefix)}"><div class="dt24-title">${esc(label)} <span class="format-24h">24H</span></div><div class="dt24-date-field"><label for="${attr(prefix)}Date" class="dt24-label">日期</label><input id="${attr(prefix)}Date" class="dt24-input" type="date" value="${valid?localDateValue(date):''}" ${allowEmpty?'':'required'}></div><div class="dt24-time-row" role="group" aria-label="${esc(label)} 時間"><div class="dt24-time-field"><label for="${attr(prefix)}Hour" class="dt24-label">時</label><select id="${attr(prefix)}Hour" class="dt24-select" aria-label="${esc(label)} 小時">${timeOptionHtml(23,h)}</select></div><span class="dt24-colon">:</span><div class="dt24-time-field"><label for="${attr(prefix)}Minute" class="dt24-label">分</label><select id="${attr(prefix)}Minute" class="dt24-select" aria-label="${esc(label)} 分鐘">${timeOptionHtml(59,m)}</select></div></div></section>`;
-}
-function readDateTime24(prefix,opts={}){
-  const dateEl=$(`#${prefix}Date`),hourEl=$(`#${prefix}Hour`),minuteEl=$(`#${prefix}Minute`);
-  if(!dateEl||!hourEl||!minuteEl)return null;
-  const date=String(dateEl.value||'').trim();
-  if(!date)return opts.allowEmpty?null:null;
-  const h=Number(hourEl.value),m=Number(minuteEl.value);
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isInteger(h)||h<0||h>23||!Number.isInteger(m)||m<0||m>59)return null;
-  const [y,mo,day]=date.split('-').map(Number);const d=new Date(y,mo-1,day,h,m,0,0);
-  if(d.getFullYear()!==y||d.getMonth()!==mo-1||d.getDate()!==day||d.getHours()!==h||d.getMinutes()!==m)return null;
-  return d;
-}
-function setDateTime24(prefix,d){
-  if(!(d instanceof Date)||Number.isNaN(d.getTime()))return;
-  const dateEl=$(`#${prefix}Date`),hourEl=$(`#${prefix}Hour`),minuteEl=$(`#${prefix}Minute`);
-  if(dateEl)dateEl.value=localDateValue(d);if(hourEl)hourEl.value=String(d.getHours()).padStart(2,'0');if(minuteEl)minuteEl.value=String(d.getMinutes()).padStart(2,'0');
-}
-function bindDateTime24(prefix,handler){['Date','Hour','Minute'].forEach(suffix=>{const el=$(`#${prefix}${suffix}`);if(el){el.addEventListener('input',handler);el.addEventListener('change',handler)}})}
-function bindOptionalDateTime24(prefix){
-  const dateEl=$(`#${prefix}Date`),hourEl=$(`#${prefix}Hour`),minuteEl=$(`#${prefix}Minute`);if(!dateEl||!hourEl||!minuteEl)return;
-  const sync=()=>{const disabled=!dateEl.value;hourEl.disabled=disabled;minuteEl.disabled=disabled};dateEl.addEventListener('input',sync);dateEl.addEventListener('change',sync);sync();
-}
-function formatTime(iso){return new Date(iso).toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}
-function formatDateTime(iso){if(!iso)return'—';return new Date(iso).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})}
-function formatBytes(n){n=Number(n||0);if(!n)return'';if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`}
-function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
-function attr(s){return esc(s).replace(/`/g,'&#96;')}
-function shorten(s,n){s=String(s||'');return s.length>n?s.slice(0,n-1)+'…':s}
-function setStatus(s){$('#statusLine').textContent=s}
-function updateSyncLabel(){$('#lastSync').textContent=state.lastSync?new Date(state.lastSync).toLocaleString('zh-TW'):'—'}
-function toast(s){const t=$('#toast');t.textContent=s;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3200)}
-function friendlyError(e){const m=e?.message||String(e);const map={GOOGLE_LOGIN_REQUIRED:'請先登入 Google',UNAUTHORIZED:'Google 授權已失效，請重新登入',REVISION_CONFLICT:'資料已在其他裝置更新，已保留衝突副本',WORKSPACE_REQUIRED:'請先加入共享工作區',WORKSPACE_FOLDER_MISMATCH:'此系統已綁定另一個共享 Google Drive 資料夾，請使用相同的共用資料夾',DRIVE_FOLDER_REQUIRED:'請輸入共享 Google Drive 資料夾',DRIVE_ACCESS_REQUIRED:'目前 Google 帳號沒有這個共享資料夾的存取權限',DRIVE_ACCESS_REVOKED:'此 Google 帳號的共享資料夾權限已被移除',DRIVE_FOLDER_NOT_FOUND:'找不到共享 Google Drive 資料夾',DRIVE_FOLDER_INVALID:'指定位置不是有效的 Google Drive 資料夾',READ_ONLY_MEMBER:'目前帳號是唯讀成員，無法新增、修改或刪除資料'};return map[m]||m.replace(/^DRIVE_\d+:\s*/,'Google Drive：').slice(0,220)}

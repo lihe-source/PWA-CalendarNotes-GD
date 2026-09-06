@@ -1,11 +1,11 @@
 {
-  "name": "行事曆・備註提醒",
+  "name": "行事曆・備註",
   "short_name": "行事曆備註",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0b1020",
-  "theme_color": "#111827",
+  "background_color": "#111a24",
+  "theme_color": "#111a24",
   "icons": [
     {
       "src": "icon-192.png",
@@ -18,6 +18,17 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    }
+  ],
+  "id": "./",
+  "shortcuts": [
+    {
+      "name": "新增行程",
+      "url": "?new=event"
+    },
+    {
+      "name": "新增備註",
+      "url": "?new=note"
     }
   ]
 }

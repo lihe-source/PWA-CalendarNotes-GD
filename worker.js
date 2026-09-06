@@ -1,129 +1,6 @@
-import { sendPushNotification, WebPushError } from '@mmmike/web-push/send';
-
-const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
-
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const cors = corsHeaders(request, env);
-
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: cors });
-    }
-
-    try {
-      if (url.pathname === '/api/health') {
-        return json({ ok: true, service: 'calendar-notes-pwa-api', now: new Date().toISOString() }, 200, cors);
-      }
-
-      if (url.pathname === '/api/config' && request.method === 'GET') {
-        return json({ vapidPublicKey: env.VAPID_PUBLIC_KEY || '' }, 200, cors);
-      }
-
-      const user = await authenticate(request);
-      if (!user) return json({ ok: false, error: 'UNAUTHORIZED' }, 401, cors);
-      await upsertUser(env.DB, user);
-
-      // 共享工作區加入 / 狀態查詢：尚未加入工作區的使用者也可以呼叫。
-      if (url.pathname === '/api/workspace/status' && request.method === 'GET') {
-        return await workspaceStatus(env, user, cors);
-      }
-      if (url.pathname === '/api/workspace/join' && request.method === 'POST') {
-        return await joinWorkspace(request, env, user, cors);
-      }
-
-      const access = await getWorkspaceAccess(env.DB, user.sub);
-      if (!access) return json({ ok: false, error: 'WORKSPACE_REQUIRED' }, 403, cors);
-
-      if (url.pathname === '/api/workspace/members' && request.method === 'GET') {
-        return await workspaceMembers(env, access, cors);
-      }
-      if (url.pathname === '/api/sync' && request.method === 'GET') {
-        return await handleSync(url, env, user, access, cors);
-      }
-
-      if (url.pathname === '/api/settings') {
-        if (request.method === 'GET') return await getSettings(env, access, cors);
-        if (request.method === 'PUT') return await putSettings(request, env, user, access, cors);
-      }
-
-      if (url.pathname.startsWith('/api/events/')) {
-        const id = decodeURIComponent(url.pathname.split('/').pop());
-        if (request.method === 'PUT') return await putEvent(request, env, user, access, id, cors);
-        if (request.method === 'DELETE') return await deleteEvent(request, env, user, access, id, cors);
-      }
-
-      if (url.pathname.startsWith('/api/notes/')) {
-        const id = decodeURIComponent(url.pathname.split('/').pop());
-        if (request.method === 'PUT') return await putNote(request, env, user, access, id, cors);
-        if (request.method === 'DELETE') return await deleteNote(request, env, user, access, id, cors);
-      }
-
-      if (url.pathname === '/api/push/subscribe' && request.method === 'POST') {
-        return await subscribePush(request, env, user, access, cors);
-      }
-      if (url.pathname === '/api/push/unsubscribe' && request.method === 'POST') {
-        return await unsubscribePush(request, env, user, cors);
-      }
-      if (url.pathname === '/api/push/test' && request.method === 'POST') {
-        return await testPush(env, user, cors);
-      }
-
-      return json({ ok: false, error: 'NOT_FOUND' }, 404, cors);
-    } catch (error) {
-      console.error('fetch error', error);
-      return json({ ok: false, error: 'SERVER_ERROR', message: error?.message || String(error) }, 500, cors);
-    }
-  },
-
-  async scheduled(controller, env, ctx) {
-    ctx.waitUntil(processDueReminders(env));
-  }
-};
-
-function corsHeaders(request, env) {
-  const origin = request.headers.get('Origin') || '';
-  const allowed = String(env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map(v => v.trim())
-    .filter(Boolean);
-  const allowOrigin = allowed.includes(origin) ? origin : (allowed[0] || 'null');
-  return {
-    ...JSON_HEADERS,
-    'Access-Control-Allow-Origin': allowOrigin,
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-    'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
-    'Access-Control-Max-Age': '86400',
-    'Vary': 'Origin'
-  };
-}
-
-function json(data, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { ...JSON_HEADERS, ...extraHeaders }
-  });
-}
-
-async function authenticate(request) {
-  const auth = request.headers.get('Authorization') || '';
-  if (!auth.startsWith('Bearer ')) return null;
-  const token = auth.slice(7).trim();
-  if (!token) return null;
-
-  const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!res.ok) return null;
-  const profile = await res.json();
-  if (!profile.sub) return null;
-  return {
-    sub: profile.sub,
-    email: profile.email || '',
-    name: profile.name || profile.email || profile.sub,
-    token
-  };
-}
+import {sendPushNotification,WebPushError} from '@mmmike/web-push/send';
+import {authenticate,persistentReady,exchangeCode,endSession} from './server-auth.js';
+import {nextTrigger,occurrenceAt,dateKeyInZone,validTimezone} from './recurrence.js';
 
 async function upsertUser(db, user) {
   const now = new Date().toISOString();
@@ -142,7 +19,7 @@ const SHARED_WORKSPACE_ID = 'shared-main';
 async function getWorkspaceAccess(db, userSub) {
   const row = await db.prepare(`
     SELECT wm.workspace_id, wm.role, wm.status, wm.email, wm.name,
-           w.name AS workspace_name, w.drive_root_folder_id, w.timezone, w.owner_sub
+           wm.last_verified_at, w.name AS workspace_name, w.drive_root_folder_id, w.timezone, w.owner_sub
     FROM workspace_members wm
     JOIN workspaces w ON w.workspace_id=wm.workspace_id
     WHERE wm.user_sub=? AND wm.status='active'
@@ -234,7 +111,8 @@ async function joinWorkspace(request, env, user, cors) {
 async function verifyDriveFolderAccess(token, folderId) {
   if (!token || !folderId) return {ok:false,error:'DRIVE_ACCESS_REQUIRED'};
   const fields = encodeURIComponent('id,name,mimeType,trashed,capabilities(canEdit,canAddChildren,canShare)');
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=${fields}&supportsAllDrives=true`, {headers:{Authorization:`Bearer ${token}`}});
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=${fields}&supportsAllDrives=true`, {headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
+  if (r.status>=500||r.status===429)throw problem('Google Drive 暫時無法連線',503);
   if (!r.ok) return {ok:false,error:r.status===404?'DRIVE_FOLDER_NOT_FOUND':'DRIVE_ACCESS_REQUIRED'};
   const f = await r.json();
   if (f.trashed || f.mimeType!=='application/vnd.google-apps.folder') return {ok:false,error:'DRIVE_FOLDER_INVALID'};
@@ -259,242 +137,6 @@ async function workspaceMembers(env, access, cors){
 
 function canWrite(access){return access && (access.role==='owner'||access.role==='editor');}
 
-async function handleSync(url, env, user, access, cors) {
-  const since = url.searchParams.get('since') || '1970-01-01T00:00:00.000Z';
-  const [eventsResult, notesResult] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM events WHERE workspace_id=? AND updated_at>? ORDER BY updated_at`).bind(access.workspace_id, since).all(),
-    env.DB.prepare(`SELECT * FROM notes WHERE workspace_id=? AND updated_at>? ORDER BY updated_at`).bind(access.workspace_id, since).all()
-  ]);
-  return json({
-    ok:true,
-    serverTime:new Date().toISOString(),
-    events:(eventsResult.results||[]).map(dbEventToJson),
-    notes:(notesResult.results||[]).map(dbNoteToJson),
-    settings:{drive_root_folder_id:access.drive_root_folder_id||'',timezone:access.timezone||'Asia/Taipei'},
-    workspace:workspaceJson(access)
-  },200,cors);
-}
-
-async function getSettings(env, access, cors) {
-  return json({ok:true,settings:{drive_root_folder_id:access.drive_root_folder_id||'',timezone:access.timezone||'Asia/Taipei'},workspace:workspaceJson(access)},200,cors);
-}
-
-async function putSettings(request, env, user, access, cors) {
-  if (!canWrite(access)) return json({ok:false,error:'READ_ONLY_MEMBER'},403,cors);
-  const body=await safeJson(request);
-  const driveRoot=String(body.drive_root_folder_id||access.drive_root_folder_id||'').trim();
-  const timezone=String(body.timezone||access.timezone||'Asia/Taipei').trim();
-  if (driveRoot && access.drive_root_folder_id && driveRoot!==access.drive_root_folder_id) return json({ok:false,error:'WORKSPACE_FOLDER_MISMATCH'},409,cors);
-  const now=new Date().toISOString();
-  await env.DB.prepare(`UPDATE workspaces SET timezone=?,updated_at=? WHERE workspace_id=?`).bind(timezone,now,access.workspace_id).run();
-  await env.DB.prepare(`INSERT INTO user_settings (user_sub,drive_root_folder_id,timezone,updated_at) VALUES (?,?,?,?) ON CONFLICT(user_sub) DO UPDATE SET drive_root_folder_id=excluded.drive_root_folder_id,timezone=excluded.timezone,updated_at=excluded.updated_at`)
-    .bind(user.sub,access.drive_root_folder_id||driveRoot,timezone,now).run();
-  return json({ok:true,settings:{drive_root_folder_id:access.drive_root_folder_id||driveRoot,timezone,updated_at:now}},200,cors);
-}
-
-async function putEvent(request, env, user, access, id, cors) {
-  if (!canWrite(access)) return json({ok:false,error:'READ_ONLY_MEMBER'},403,cors);
-  const body=await safeJson(request); validateId(id);
-  if(!body.title||!body.start_at) return json({ok:false,error:'TITLE_AND_START_REQUIRED'},400,cors);
-  const existing=await env.DB.prepare(`SELECT * FROM events WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  const baseRevision=Number(body.base_revision||0);
-  if(existing&&baseRevision!==Number(existing.revision)) return json({ok:false,error:'REVISION_CONFLICT',server:dbEventToJson(existing)},409,cors);
-  const now=new Date().toISOString(); const revision=existing?Number(existing.revision)+1:1; const createdAt=existing?.created_at||body.created_at||now;
-  if(existing){
-    await env.DB.prepare(`UPDATE events SET title=?,description=?,location=?,start_at=?,end_at=?,all_day=?,category=?,color=?,completed=?,repeat_rule=?,reminder_minutes=?,attachment_meta=?,revision=?,updated_at=?,deleted_at=NULL WHERE workspace_id=? AND id=?`).bind(
-      String(body.title).trim(),String(body.description||''),String(body.location||''),body.start_at,body.end_at||null,body.all_day?1:0,String(body.category||''),String(body.color||''),body.completed?1:0,String(body.repeat_rule||''),JSON.stringify(normalizeMinutes(body.reminder_minutes)),JSON.stringify(Array.isArray(body.attachment_meta)?body.attachment_meta:[]),revision,now,access.workspace_id,id
-    ).run();
-  }else{
-    await env.DB.prepare(`INSERT INTO events (id,user_sub,workspace_id,title,description,location,start_at,end_at,all_day,category,color,completed,repeat_rule,reminder_minutes,attachment_meta,revision,created_at,updated_at,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`).bind(
-      id,user.sub,access.workspace_id,String(body.title).trim(),String(body.description||''),String(body.location||''),body.start_at,body.end_at||null,body.all_day?1:0,String(body.category||''),String(body.color||''),body.completed?1:0,String(body.repeat_rule||''),JSON.stringify(normalizeMinutes(body.reminder_minutes)),JSON.stringify(Array.isArray(body.attachment_meta)?body.attachment_meta:[]),revision,createdAt,now
-    ).run();
-  }
-  const saved=await env.DB.prepare(`SELECT * FROM events WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  await rebuildEventReminders(env.DB,access.workspace_id,saved.user_sub,saved);
-  return json({ok:true,item:dbEventToJson(saved)},200,cors);
-}
-
-async function deleteEvent(request, env, user, access, id, cors) {
-  if (!canWrite(access)) return json({ok:false,error:'READ_ONLY_MEMBER'},403,cors);
-  validateId(id); const existing=await env.DB.prepare(`SELECT * FROM events WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  if(!existing) return json({ok:true},200,cors);
-  const body=await safeJson(request); if(Number(body.base_revision||0)!==Number(existing.revision)) return json({ok:false,error:'REVISION_CONFLICT',server:dbEventToJson(existing)},409,cors);
-  const now=new Date().toISOString();
-  await env.DB.prepare(`UPDATE events SET deleted_at=?,updated_at=?,revision=revision+1 WHERE workspace_id=? AND id=?`).bind(now,now,access.workspace_id,id).run();
-  await env.DB.prepare(`UPDATE reminders SET cancelled=1,updated_at=? WHERE workspace_id=? AND source_type='event' AND source_id=? AND sent_at IS NULL`).bind(now,access.workspace_id,id).run();
-  const saved=await env.DB.prepare(`SELECT * FROM events WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  return json({ok:true,item:dbEventToJson(saved)},200,cors);
-}
-
-async function putNote(request, env, user, access, id, cors) {
-  if (!canWrite(access)) return json({ok:false,error:'READ_ONLY_MEMBER'},403,cors);
-  const body=await safeJson(request); validateId(id); if(!body.title) return json({ok:false,error:'TITLE_REQUIRED'},400,cors);
-  const existing=await env.DB.prepare(`SELECT * FROM notes WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  const baseRevision=Number(body.base_revision||0); if(existing&&baseRevision!==Number(existing.revision)) return json({ok:false,error:'REVISION_CONFLICT',server:dbNoteToJson(existing)},409,cors);
-  const now=new Date().toISOString(); const revision=existing?Number(existing.revision)+1:1; const createdAt=existing?.created_at||body.created_at||now;
-  if(existing){
-    await env.DB.prepare(`UPDATE notes SET title=?,content=?,category=?,tags=?,pinned=?,completed=?,reminder_at=?,attachment_meta=?,revision=?,updated_at=?,deleted_at=NULL WHERE workspace_id=? AND id=?`).bind(
-      String(body.title).trim(),String(body.content||''),String(body.category||''),JSON.stringify(Array.isArray(body.tags)?body.tags:[]),body.pinned?1:0,body.completed?1:0,body.reminder_at||null,JSON.stringify(Array.isArray(body.attachment_meta)?body.attachment_meta:[]),revision,now,access.workspace_id,id
-    ).run();
-  }else{
-    await env.DB.prepare(`INSERT INTO notes (id,user_sub,workspace_id,title,content,category,tags,pinned,completed,reminder_at,attachment_meta,revision,created_at,updated_at,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`).bind(
-      id,user.sub,access.workspace_id,String(body.title).trim(),String(body.content||''),String(body.category||''),JSON.stringify(Array.isArray(body.tags)?body.tags:[]),body.pinned?1:0,body.completed?1:0,body.reminder_at||null,JSON.stringify(Array.isArray(body.attachment_meta)?body.attachment_meta:[]),revision,createdAt,now
-    ).run();
-  }
-  const saved=await env.DB.prepare(`SELECT * FROM notes WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  await rebuildNoteReminder(env.DB,access.workspace_id,saved.user_sub,saved);
-  return json({ok:true,item:dbNoteToJson(saved)},200,cors);
-}
-
-async function deleteNote(request, env, user, access, id, cors) {
-  if (!canWrite(access)) return json({ok:false,error:'READ_ONLY_MEMBER'},403,cors);
-  validateId(id); const existing=await env.DB.prepare(`SELECT * FROM notes WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  if(!existing) return json({ok:true},200,cors);
-  const body=await safeJson(request); if(Number(body.base_revision||0)!==Number(existing.revision)) return json({ok:false,error:'REVISION_CONFLICT',server:dbNoteToJson(existing)},409,cors);
-  const now=new Date().toISOString();
-  await env.DB.prepare(`UPDATE notes SET deleted_at=?,updated_at=?,revision=revision+1 WHERE workspace_id=? AND id=?`).bind(now,now,access.workspace_id,id).run();
-  await env.DB.prepare(`UPDATE reminders SET cancelled=1,updated_at=? WHERE workspace_id=? AND source_type='note' AND source_id=? AND sent_at IS NULL`).bind(now,access.workspace_id,id).run();
-  const saved=await env.DB.prepare(`SELECT * FROM notes WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
-  return json({ok:true,item:dbNoteToJson(saved)},200,cors);
-}
-
-async function rebuildEventReminders(db, workspaceId, creatorSub, eventRow) {
-  const now=new Date().toISOString();
-  await db.prepare(`UPDATE reminders SET cancelled=1,updated_at=? WHERE workspace_id=? AND source_type='event' AND source_id=? AND sent_at IS NULL`).bind(now,workspaceId,eventRow.id).run();
-  if(eventRow.deleted_at||eventRow.completed)return;
-  const startMs=Date.parse(eventRow.start_at); if(!Number.isFinite(startMs))return;
-  const minutes=normalizeMinutes(parseJson(eventRow.reminder_minutes,[]));
-  for(const min of minutes){
-    let trigger=new Date(startMs-min*60000);
-    if(eventRow.repeat_rule&&trigger.getTime()<=Date.now()){const nextTrigger=nextRecurringTrigger(new Date(startMs),eventRow.repeat_rule,min,new Date());if(nextTrigger)trigger=nextTrigger;}
-    if(trigger.getTime()<=Date.now()-60000)continue;
-    const rid=`event:${workspaceId}:${eventRow.id}:${min}:${trigger.toISOString()}`;
-    await db.prepare(`INSERT OR REPLACE INTO reminders (id,user_sub,workspace_id,source_type,source_id,title,body,trigger_at,offset_minutes,sent_at,cancelled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,0,?,?)`).bind(
-      rid,creatorSub,workspaceId,'event',eventRow.id,eventRow.title,eventRow.location?`地點：${eventRow.location}`:(eventRow.description||''),trigger.toISOString(),min,now,now
-    ).run();
-  }
-}
-
-async function rebuildNoteReminder(db, workspaceId, creatorSub, noteRow) {
-  const now=new Date().toISOString();
-  await db.prepare(`UPDATE reminders SET cancelled=1,updated_at=? WHERE workspace_id=? AND source_type='note' AND source_id=? AND sent_at IS NULL`).bind(now,workspaceId,noteRow.id).run();
-  if(noteRow.deleted_at||noteRow.completed||!noteRow.reminder_at)return;
-  const t=new Date(noteRow.reminder_at); if(!Number.isFinite(t.getTime())||t.getTime()<=Date.now()-60000)return;
-  const rid=`note:${workspaceId}:${noteRow.id}:${t.toISOString()}`;
-  await db.prepare(`INSERT OR REPLACE INTO reminders (id,user_sub,workspace_id,source_type,source_id,title,body,trigger_at,offset_minutes,sent_at,cancelled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,0,?,?)`).bind(
-    rid,creatorSub,workspaceId,'note',noteRow.id,noteRow.title,truncate(noteRow.content,160),t.toISOString(),0,now,now
-  ).run();
-}
-
-async function subscribePush(request, env, user, access, cors) {
-  const body=await safeJson(request); const sub=body.subscription;
-  if(!sub?.endpoint||!sub?.keys?.p256dh||!sub?.keys?.auth)return json({ok:false,error:'INVALID_SUBSCRIPTION'},400,cors);
-  if(!isAllowedPushEndpoint(sub.endpoint))return json({ok:false,error:'UNSUPPORTED_PUSH_ENDPOINT'},400,cors);
-  const now=new Date().toISOString();
-  await env.DB.prepare(`INSERT INTO push_subscriptions (endpoint,user_sub,p256dh,auth,device_name,created_at,updated_at,last_seen_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_sub=excluded.user_sub,p256dh=excluded.p256dh,auth=excluded.auth,device_name=excluded.device_name,updated_at=excluded.updated_at,last_seen_at=excluded.last_seen_at`).bind(sub.endpoint,user.sub,sub.keys.p256dh,sub.keys.auth,String(body.device_name||''),now,now,now).run();
-  return json({ok:true,workspace:workspaceJson(access)},200,cors);
-}
-
-async function unsubscribePush(request, env, user, cors) {
-  const body=await safeJson(request); const endpoint=String(body.endpoint||''); if(endpoint)await env.DB.prepare(`DELETE FROM push_subscriptions WHERE user_sub=? AND endpoint=?`).bind(user.sub,endpoint).run(); return json({ok:true},200,cors);
-}
-
-async function testPush(env, user, cors) {
-  const rows=await env.DB.prepare(`SELECT * FROM push_subscriptions WHERE user_sub=?`).bind(user.sub).all(); let sent=0;
-  for(const row of rows.results||[]){const ok=await sendPush(env,row,{title:'測試通知成功',body:'Cloudflare Web Push 已正常連線。',url:'/',tag:'test-push'});if(ok)sent++;}
-  return json({ok:true,sent},200,cors);
-}
-
-async function processDueReminders(env) {
-  const now=new Date().toISOString();
-  const due=await env.DB.prepare(`SELECT * FROM reminders WHERE cancelled=0 AND sent_at IS NULL AND trigger_at<=? ORDER BY trigger_at ASC LIMIT 100`).bind(now).all();
-  for(const reminder of due.results||[]){
-    const subs=await env.DB.prepare(`SELECT ps.* FROM push_subscriptions ps JOIN workspace_members wm ON wm.user_sub=ps.user_sub WHERE wm.workspace_id=? AND wm.status='active'`).bind(reminder.workspace_id||SHARED_WORKSPACE_ID).all();
-    const notification=await buildReminderNotification(env,reminder);
-    for(const sub of subs.results||[]) await sendPush(env,sub,notification);
-    const sentAt=new Date().toISOString(); await env.DB.prepare(`UPDATE reminders SET sent_at=?,updated_at=? WHERE id=?`).bind(sentAt,sentAt,reminder.id).run();
-    if(reminder.source_type==='event'){
-      const ev=await env.DB.prepare(`SELECT * FROM events WHERE workspace_id=? AND id=?`).bind(reminder.workspace_id||SHARED_WORKSPACE_ID,reminder.source_id).first();
-      if(ev&&!ev.deleted_at&&!ev.completed&&ev.repeat_rule){
-        const trigger=nextRecurringTrigger(new Date(ev.start_at),ev.repeat_rule,Number(reminder.offset_minutes||0),new Date());
-        if(trigger){
-          const ws=reminder.workspace_id||SHARED_WORKSPACE_ID; const rid=`event:${ws}:${ev.id}:${Number(reminder.offset_minutes||0)}:${trigger.toISOString()}`;
-          await env.DB.prepare(`INSERT OR IGNORE INTO reminders (id,user_sub,workspace_id,source_type,source_id,title,body,trigger_at,offset_minutes,sent_at,cancelled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,0,?,?)`).bind(
-            rid,ev.user_sub,ws,'event',ev.id,ev.title,ev.location?`地點：${ev.location}`:(ev.description||''),trigger.toISOString(),Number(reminder.offset_minutes||0),sentAt,sentAt
-          ).run();
-        }
-      }
-    }
-  }
-}
-
-async function buildReminderNotification(env, reminder) {
-  let title=String(reminder.title||'').trim(); let body=String(reminder.body||'').trim(); let source=null; const ws=reminder.workspace_id||SHARED_WORKSPACE_ID;
-  if(reminder.source_type==='event'){
-    source=await env.DB.prepare(`SELECT title,start_at,location,description FROM events WHERE workspace_id=? AND id=?`).bind(ws,reminder.source_id).first();
-    if(source?.title)title=String(source.title).trim();
-    if(source){const setting=await env.DB.prepare(`SELECT timezone FROM workspaces WHERE workspace_id=?`).bind(ws).first();const timezone=setting?.timezone||'Asia/Taipei';const parts=[];if(source.start_at)parts.push(`時間：${formatPushDateTime(source.start_at,timezone)}`);if(source.location)parts.push(`地點：${source.location}`);if(!source.location&&source.description)parts.push(truncate(source.description,120));body=parts.filter(Boolean).join(' · ')||body||'行程提醒';}
-  }else if(reminder.source_type==='note'){
-    source=await env.DB.prepare(`SELECT title,content FROM notes WHERE workspace_id=? AND id=?`).bind(ws,reminder.source_id).first(); if(source?.title)title=String(source.title).trim(); if(source?.content)body=truncate(source.content,150);
-  }
-  return {title:title||(reminder.source_type==='event'?'行程提醒':'備註提醒'),body:body||'提醒時間到了',url:`?open=${encodeURIComponent(reminder.source_type)}&id=${encodeURIComponent(reminder.source_id)}`,tag:`reminder-${reminder.source_type}-${reminder.source_id}`};
-}
-
-function formatPushDateTime(iso, timezone) {
-  try {
-    return new Intl.DateTimeFormat('zh-TW', { timeZone: timezone || 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
-  } catch {
-    return new Date(iso).toISOString().slice(5,16).replace('T',' ');
-  }
-}
-
-async function sendPush(env, row, payloadData) {
-  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) {
-    console.error('VAPID secrets are not configured');
-    return false;
-  }
-  const subscription = {
-    endpoint: row.endpoint,
-    expirationTime: null,
-    keys: { p256dh: row.p256dh, auth: row.auth }
-  };
-  const vapid = {
-    subject: env.VAPID_SUBJECT,
-    publicKey: env.VAPID_PUBLIC_KEY,
-    privateKey: env.VAPID_PRIVATE_KEY
-  };
-  try {
-    const delivered = await sendPushNotification(subscription, payloadData, vapid, {
-      ttl: 300,
-      urgency: 'high'
-    });
-    if (!delivered) {
-      await env.DB.prepare(`DELETE FROM push_subscriptions WHERE endpoint=?`).bind(row.endpoint).run();
-      return false;
-    }
-    return true;
-  } catch (error) {
-    if (error instanceof WebPushError && (error.statusCode === 404 || error.statusCode === 410)) {
-      await env.DB.prepare(`DELETE FROM push_subscriptions WHERE endpoint=?`).bind(row.endpoint).run();
-      return false;
-    }
-    console.error('Push exception', error?.statusCode || '', error?.message || String(error));
-    return false;
-  }
-}
-
-function isAllowedPushEndpoint(endpoint) {
-  try {
-    const u = new URL(endpoint);
-    if (u.protocol !== 'https:') return false;
-    const h = u.hostname.toLowerCase();
-    return h === 'fcm.googleapis.com' ||
-      h.endsWith('.push.services.mozilla.com') ||
-      h.endsWith('.push.apple.com');
-  } catch {
-    return false;
-  }
-}
 
 function dbEventToJson(r) {
   return {
@@ -536,48 +178,182 @@ function dbNoteToJson(r) {
   };
 }
 
-function nextRecurringTrigger(start, rule, offsetMinutes, after) {
-  if (!(start instanceof Date) || Number.isNaN(start.getTime())) return null;
-  let occurrence = new Date(start.getTime());
-  const offsetMs = Number(offsetMinutes || 0) * 60000;
-  for (let i = 0; i < 5000; i++) {
-    const trigger = new Date(occurrence.getTime() - offsetMs);
-    if (trigger.getTime() > after.getTime()) return trigger;
-    const next = advanceOccurrence(occurrence, rule);
-    if (!next) return null;
-    occurrence = next;
+const problem=(message,status=400)=>Object.assign(new Error(message),{status});
+function json(data,status=200,cors={}){return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...cors}})}
+function corsHeaders(request,env){const origin=request.headers.get('Origin')||'',allowed=String(env.ALLOWED_ORIGINS||'').split(',').map(x=>x.trim());return {'Access-Control-Allow-Origin':allowed.includes(origin)?origin:'null','Access-Control-Allow-Headers':'Authorization, Content-Type, X-Requested-With','Access-Control-Allow-Methods':'GET, PUT, POST, DELETE, OPTIONS','Access-Control-Max-Age':'86400',Vary:'Origin'}}
+function parseJson(value,fallback){try{return JSON.parse(value)}catch{return fallback}}
+function normalizeMinutes(value){return [...new Set((Array.isArray(value)?value:[]).map(Number).filter(v=>Number.isInteger(v)&&v>=0&&v<=10080))].sort((a,b)=>a-b)}
+async function safeJson(request){try{return await request.json()}catch{throw problem('INVALID_JSON')}}
+function validateId(id){if(!/^[A-Za-z0-9._:-]{1,180}$/.test(id))throw problem('INVALID_ID')}
+function truncate(s,n){return String(s||'').replace(/\s+/g,' ').slice(0,n)}
+const tables={events:['title','description','location','start_at','end_at','all_day','category','color','completed','repeat_rule','reminder_minutes','attachment_meta'],notes:['title','content','category','tags','pinned','completed','reminder_at','attachment_meta']};
+const convert=(kind,row)=>kind==='events'?dbEventToJson(row):dbNoteToJson(row);
+function normalizeItem(kind,input){
+  if(!input||typeof input!=='object'||typeof input.title!=='string'||!input.title.trim())throw problem('TITLE_REQUIRED');validateId(input.id);
+  const item={id:input.id,title:input.title.trim().slice(0,300),category:String(input.category||'').slice(0,40),completed:!!input.completed,attachment_meta:[]};
+  for(const a of Array.isArray(input.attachment_meta)?input.attachment_meta:[]){if(typeof a.id!=='string'||!a.id)continue;item.attachment_meta.push({id:a.id,name:String(a.name||'附件').slice(0,250),mimeType:String(a.mimeType||''),size:Math.max(0,Number(a.size)||0),webViewLink:`https://drive.google.com/file/d/${encodeURIComponent(a.id)}/view`,thumbnailLink:'',createdTime:a.createdTime||''})}
+  const date=s=>{if(!s)return null;const d=new Date(s);if(!Number.isFinite(d.getTime()))throw problem('INVALID_DATE');return d.toISOString()};
+  if(kind==='events'){
+    item.start_at=date(input.start_at);if(!item.start_at)throw problem('START_REQUIRED');item.end_at=date(input.end_at);if(item.end_at&&item.end_at<item.start_at)throw problem('END_BEFORE_START');
+    Object.assign(item,{description:String(input.description||'').slice(0,30000),location:String(input.location||'').slice(0,500),all_day:!!input.all_day,color:String(input.color||'').slice(0,30),repeat_rule:String(input.repeat_rule||''),reminder_minutes:normalizeMinutes(input.reminder_minutes)});
+    if(!['','daily','weekly','monthly','yearly'].includes(item.repeat_rule))throw problem('INVALID_REPEAT');
+    if(item.end_at&&Date.parse(item.end_at)-Date.parse(item.start_at)>3660*86400000)throw problem('行程跨度不可超過十年');
+  }else Object.assign(item,{content:String(input.content||'').slice(0,60000),tags:(Array.isArray(input.tags)?input.tags:[]).map(x=>String(x).slice(0,40)).slice(0,30),pinned:!!input.pinned,reminder_at:date(input.reminder_at)});
+  if(JSON.stringify(item).length>150000)throw problem('ITEM_TOO_LARGE');return item;
+}
+function rowValues(kind,item){return tables[kind].map(k=>Array.isArray(item[k])?JSON.stringify(item[k]):typeof item[k]==='boolean'?Number(item[k]):item[k]??null)}
+function remindersFor(kind,item,userSub,workspaceId,tz){
+  if(item.deleted_at||item.completed)return [];
+  const now=new Date(),sourceType=kind==='events'?'event':'note',out=[];
+  const entries=kind==='events'?normalizeMinutes(item.reminder_minutes):[0];
+  for(const offset of entries){
+    let trigger,occurrence;
+    if(kind==='events'){
+      trigger=nextTrigger(item,offset,new Date(now.getTime()-1000),tz);
+      if(!item.repeat_rule&&Date.parse(item.start_at)-offset*60000>=now.getTime()-60000)trigger=new Date(Date.parse(item.start_at)-offset*60000);
+      occurrence=trigger?new Date(trigger.getTime()+offset*60000):null;
+    }else trigger=item.reminder_at?new Date(item.reminder_at):null;
+    if(!trigger||trigger.getTime()<now.getTime()-60000)continue;
+    out.push({id:`${sourceType}:${workspaceId}:${item.id}:${offset}:${trigger.toISOString()}`,user_sub:userSub,workspace_id:workspaceId,source_type:sourceType,source_id:item.id,title:item.title,body:JSON.stringify({text:truncate(kind==='events'?(item.location||item.description||''):(item.content||''),180),occurrence:occurrence?.toISOString()||null}),trigger_at:trigger.toISOString(),offset_minutes:offset,created_at:now.toISOString(),updated_at:now.toISOString()});
+  }return out;
+}
+function reminderStatements(db,kind,item,userSub,access){const ws=access.workspace_id,now=new Date().toISOString();const rows=remindersFor(kind,item,userSub,ws,access.timezone||'Asia/Taipei');return [
+  db.prepare("UPDATE reminders SET cancelled=1,updated_at=? WHERE workspace_id=? AND source_type=? AND source_id=? AND sent_at IS NULL").bind(now,ws,kind==='events'?'event':'note',item.id),
+  db.prepare(`INSERT INTO reminders(id,user_sub,workspace_id,source_type,source_id,title,body,trigger_at,offset_minutes,created_at,updated_at,cancelled,sent_at) SELECT json_extract(value,'$.id'),json_extract(value,'$.user_sub'),json_extract(value,'$.workspace_id'),json_extract(value,'$.source_type'),json_extract(value,'$.source_id'),json_extract(value,'$.title'),json_extract(value,'$.body'),json_extract(value,'$.trigger_at'),json_extract(value,'$.offset_minutes'),json_extract(value,'$.created_at'),json_extract(value,'$.updated_at'),0,NULL FROM json_each(?) WHERE true ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,cancelled=0,updated_at=excluded.updated_at`).bind(JSON.stringify(rows)),
+  db.prepare('DELETE FROM reminder_rebuild_jobs WHERE workspace_id=? AND kind=? AND item_id=?').bind(ws,kind,item.id)
+]}
+async function receipt(db,ws,id){if(!id)return null;const r=await db.prepare('SELECT response FROM mutation_receipts WHERE workspace_id=? AND mutation_id=?').bind(ws,id).first();return r?JSON.parse(r.response):null;}
+async function mutate(request,env,user,access,kind,id){
+  if(!canWrite(access))throw problem('READ_ONLY_MEMBER',403);validateId(id);const body=await safeJson(request),mutation=String(body.mutation_id||crypto.randomUUID());validateId(mutation);
+  const prior=await receipt(env.DB,access.workspace_id,mutation);if(prior)return prior;
+  const old=await env.DB.prepare(`SELECT * FROM ${kind} WHERE workspace_id=? AND id=?`).bind(access.workspace_id,id).first();
+  if(old&&Number(body.base_revision||0)!==old.revision)return {conflict:true,server:convert(kind,old)};
+  const deleting=request.method==='DELETE';if(deleting&&!old)return {ok:true,item:{...body,id,deleted_at:new Date().toISOString()}};
+  const now=new Date().toISOString();let item=deleting?{...convert(kind,old),deleted_at:now}:normalizeItem(kind,{...body,id});
+  item={...item,revision:old?old.revision+1:1,created_at:old?.created_at||now,updated_at:now,deleted_at:deleting?now:null};
+  const ws=access.workspace_id,creator=old?.user_sub||user.sub,guard=crypto.randomUUID(),result={ok:true,item},statements=[];
+  if(old){if(deleting)statements.push(env.DB.prepare(`UPDATE ${kind} SET deleted_at=?,updated_at=?,revision=revision+1 WHERE workspace_id=? AND id=? AND revision=?`).bind(now,now,ws,id,old.revision));
+    else statements.push(env.DB.prepare(`UPDATE ${kind} SET ${tables[kind].map(k=>k+'=?').join(',')},revision=?,updated_at=?,deleted_at=NULL WHERE workspace_id=? AND id=? AND revision=?`).bind(...rowValues(kind,item),item.revision,now,ws,id,old.revision));
+  }else statements.push(env.DB.prepare(`INSERT INTO ${kind}(id,user_sub,workspace_id,${tables[kind].join(',')},revision,created_at,updated_at,deleted_at) VALUES(${Array(tables[kind].length+7).fill('?').join(',')})`).bind(id,creator,ws,...rowValues(kind,item),1,now,now,null));
+  statements.push(env.DB.prepare('INSERT INTO transaction_assertions(id,ok) VALUES(?,changes())').bind(guard));
+  statements.push(...reminderStatements(env.DB,kind,item,creator,access));
+  statements.push(env.DB.prepare('INSERT INTO mutation_receipts(workspace_id,mutation_id,response,created_at) VALUES(?,?,?,?)').bind(ws,mutation,JSON.stringify(result),now));
+  statements.push(env.DB.prepare('DELETE FROM transaction_assertions WHERE id=?').bind(guard));
+  try{await env.DB.batch(statements)}catch(e){const replay=await receipt(env.DB,ws,mutation);if(replay)return replay;const latest=await env.DB.prepare(`SELECT * FROM ${kind} WHERE workspace_id=? AND id=?`).bind(ws,id).first();if(latest&&(!old||latest.revision!==old.revision))return {conflict:true,server:convert(kind,latest)};throw e;}
+  return result;
+}
+async function snapshot(env,access,since=null){
+  const ws=access.workspace_id,isCursor=/^\d+$/.test(String(since));
+  const query=kind=>env.DB.prepare(`SELECT * FROM ${kind} WHERE workspace_id=? ${isCursor?'AND id IN (SELECT item_id FROM change_log WHERE workspace_id=? AND kind=? AND change_id>?)':''} ORDER BY id`).bind(...(isCursor?[ws,ws,kind,Number(since)]:[ws]));
+  const result=await env.DB.batch([env.DB.prepare('SELECT COALESCE(MAX(change_id),0) AS cursor FROM change_log WHERE workspace_id=?').bind(ws),query('events'),query('notes'),env.DB.prepare('SELECT generation FROM workspace_state WHERE workspace_id=?').bind(ws),env.DB.prepare('SELECT categories FROM workspace_preferences WHERE workspace_id=?').bind(ws)]);
+  return {ok:true,cursor:String(result[0].results[0].cursor),generation:Number(result[3].results[0]?.generation||0),serverTime:new Date().toISOString(),events:result[1].results.map(dbEventToJson),notes:result[2].results.map(dbNoteToJson),workspace:workspaceJson(access),settings:{drive_root_folder_id:access.drive_root_folder_id,timezone:access.timezone,categories:parseJson(result[4].results[0]?.categories,['工作','會議','生活'])}};
+}
+async function putSettings(request,env,user,access){
+  if(!canWrite(access))throw problem('READ_ONLY_MEMBER',403);const body=await safeJson(request),tz=body.timezone||access.timezone;if(!validTimezone(tz))throw problem('INVALID_TIMEZONE');
+  const categories=[...new Set((body.categories||[]).map(x=>String(x).trim().slice(0,40)).filter(Boolean))].slice(0,100);
+  await env.DB.batch([env.DB.prepare('UPDATE workspaces SET timezone=?,updated_at=? WHERE workspace_id=?').bind(tz,new Date().toISOString(),access.workspace_id),env.DB.prepare('INSERT INTO workspace_preferences(workspace_id,categories) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET categories=excluded.categories').bind(access.workspace_id,JSON.stringify(categories)),env.DB.prepare("INSERT OR IGNORE INTO reminder_rebuild_jobs(workspace_id,kind,item_id) SELECT workspace_id,'events',id FROM events WHERE workspace_id=? AND repeat_rule<>'' AND deleted_at IS NULL").bind(access.workspace_id)]);return {ok:true};
+}
+async function restore(request,env,user,access){
+  if(!canWrite(access))throw problem('READ_ONLY_MEMBER',403);const body=await safeJson(request),data=body.backup;
+  if(!data||![1,2].includes(data.schema)||!Array.isArray(data.events)||!Array.isArray(data.notes))throw problem('INVALID_BACKUP');
+  if(!Number.isSafeInteger(body.expectedGeneration))throw problem('RESTORE_PREVIEW_REQUIRED');
+  if(new TextEncoder().encode(JSON.stringify(data)).length>1500000)throw problem('備份超過安全還原上限（約 1.5 MB），請分批匯入',413);
+  if(data.settings?.driveRoot&&data.settings.driveRoot!==access.drive_root_folder_id)throw problem('WORKSPACE_FOLDER_MISMATCH',409);
+  if(data.events.length+data.notes.length>2000)throw problem('單次還原最多 2,000 筆記錄，已停止還原',413);
+  const current=await snapshot(env,access);if(current.generation!==body.expectedGeneration)throw problem('RESTORE_CONFLICT',409);
+  const now=new Date().toISOString(),ws=access.workspace_id,guard=crypto.randomUUID(),historyId=crypto.randomUUID(),statements=[];
+  const prepared={};for(const kind of ['events','notes']){const ids=new Set(),old=new Map(current[kind].map(x=>[x.id,x]));prepared[kind]=data[kind].filter(x=>!x.deleted_at).map(x=>{if(ids.has(x.id))throw problem('DUPLICATE_BACKUP_ID');ids.add(x.id);const item=normalizeItem(kind,x);return {...item,revision:Number(old.get(x.id)?.revision||0)+1,created_at:old.get(x.id)?.created_at||now,updated_at:now,deleted_at:null}})}
+  const oldPayload=JSON.stringify({...current,schema:2,settings:{...current.settings,driveRoot:access.drive_root_folder_id}});if(new TextEncoder().encode(oldPayload).length>1800000)throw problem('目前資料超過安全快照上限，已停止還原',413);
+  statements.push(env.DB.prepare('INSERT INTO transaction_assertions(id,ok) VALUES(?,CASE WHEN COALESCE((SELECT generation FROM workspace_state WHERE workspace_id=?),0)=? THEN 1 ELSE 0 END)').bind(guard,ws,body.expectedGeneration));
+  statements.push(env.DB.prepare('INSERT INTO restore_history(id,workspace_id,created_by,created_at,payload) VALUES(?,?,?,?,?)').bind(historyId,ws,user.sub,now,oldPayload));
+  for(const kind of ['events','notes']){
+    const fields=tables[kind],oldCreator=`COALESCE((SELECT user_sub FROM ${kind} WHERE workspace_id=? AND id=json_extract(j.value,'$.id')),?)`;
+    statements.push(env.DB.prepare(`UPDATE ${kind} SET deleted_at=?,updated_at=?,revision=revision+1 WHERE workspace_id=? AND deleted_at IS NULL`).bind(now,now,ws));
+    const select=fields.map(k=>['attachment_meta','tags','reminder_minutes'].includes(k)?`json_extract(j.value,'$.${k}')`:`json_extract(j.value,'$.${k}')`).join(',');
+    statements.push(env.DB.prepare(`INSERT INTO ${kind}(id,user_sub,workspace_id,${fields.join(',')},revision,created_at,updated_at,deleted_at) SELECT json_extract(j.value,'$.id'),${oldCreator},?,${select},json_extract(j.value,'$.revision'),json_extract(j.value,'$.created_at'),?,NULL FROM json_each(?) j WHERE true ON CONFLICT(workspace_id,id) DO UPDATE SET ${fields.map(k=>k+'=excluded.'+k).join(',')},revision=excluded.revision,updated_at=excluded.updated_at,deleted_at=NULL`).bind(ws,user.sub,ws,now,JSON.stringify(prepared[kind])));
   }
-  return null;
+  statements.push(env.DB.prepare('UPDATE reminders SET cancelled=1,updated_at=? WHERE workspace_id=? AND sent_at IS NULL').bind(now,ws));
+  const tz=validTimezone(data.timezone||'')?data.timezone:access.timezone;
+  const rows=[...prepared.events.flatMap(e=>remindersFor('events',e,user.sub,ws,tz)),...prepared.notes.flatMap(n=>remindersFor('notes',n,user.sub,ws,tz))];
+  for(let offset=0;offset<rows.length;offset+=500)statements.push(env.DB.prepare(`INSERT INTO reminders(id,user_sub,workspace_id,source_type,source_id,title,body,trigger_at,offset_minutes,created_at,updated_at,cancelled,sent_at) SELECT json_extract(value,'$.id'),json_extract(value,'$.user_sub'),json_extract(value,'$.workspace_id'),json_extract(value,'$.source_type'),json_extract(value,'$.source_id'),json_extract(value,'$.title'),json_extract(value,'$.body'),json_extract(value,'$.trigger_at'),json_extract(value,'$.offset_minutes'),?,?,0,NULL FROM json_each(?) WHERE true ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,cancelled=0,updated_at=excluded.updated_at`).bind(now,now,JSON.stringify(rows.slice(offset,offset+500))));
+  statements.push(env.DB.prepare('UPDATE workspaces SET timezone=?,updated_at=? WHERE workspace_id=?').bind(tz,now,ws));
+  if(Array.isArray(data.settings?.categories))statements.push(env.DB.prepare('INSERT INTO workspace_preferences(workspace_id,categories) VALUES(?,?) ON CONFLICT(workspace_id) DO UPDATE SET categories=excluded.categories').bind(ws,JSON.stringify([...new Set(data.settings.categories.map(x=>String(x).slice(0,40)))].slice(0,100))));
+  statements.push(env.DB.prepare('DELETE FROM reminder_rebuild_jobs WHERE workspace_id=?').bind(ws));
+  statements.push(env.DB.prepare('DELETE FROM transaction_assertions WHERE id=?').bind(guard));
+  try{await env.DB.batch(statements)}catch(e){if(String(e.message).includes('CHECK constraint'))throw problem('RESTORE_CONFLICT',409);throw e;}
+  return {ok:true,historyId,...await snapshot(env,{...access,timezone:tz})};
 }
-
-function advanceOccurrence(date, rule) {
-  const d = new Date(date.getTime());
-  if (rule === 'daily') d.setUTCDate(d.getUTCDate() + 1);
-  else if (rule === 'weekly') d.setUTCDate(d.getUTCDate() + 7);
-  else if (rule === 'monthly') d.setUTCMonth(d.getUTCMonth() + 1);
-  else if (rule === 'yearly') d.setUTCFullYear(d.getUTCFullYear() + 1);
-  else return null;
-  return d;
+function allowedEndpoint(endpoint){try{const u=new URL(endpoint);return u.protocol==='https:'&&(u.hostname==='fcm.googleapis.com'||u.hostname.endsWith('.push.services.mozilla.com')||u.hostname==='updates.push.services.mozilla.com'||u.hostname.endsWith('.push.apple.com'))}catch{return false}}
+async function pushOutcome(env,row,payload){
+  if(!env.VAPID_PUBLIC_KEY||!env.VAPID_PRIVATE_KEY||!env.VAPID_SUBJECT)return {status:'retry',error:'VAPID 尚未設定'};
+  try{const accepted=await sendPushNotification({endpoint:row.endpoint,expirationTime:null,keys:{p256dh:row.p256dh,auth:row.auth}},payload,{subject:env.VAPID_SUBJECT,publicKey:env.VAPID_PUBLIC_KEY,privateKey:env.VAPID_PRIVATE_KEY},{ttl:3600,urgency:'high'});return accepted?{status:'accepted'}:{status:'gone',error:'訂閱已失效'};}
+  catch(e){return e instanceof WebPushError&&[404,410].includes(e.statusCode)?{status:'gone',error:'訂閱已失效'}:{status:'retry',error:`推播服務暫時失敗 ${e.statusCode||''}`};}
 }
-
-function normalizeMinutes(value) {
-  const arr = Array.isArray(value) ? value : [];
-  return [...new Set(arr.map(Number).filter(v => Number.isFinite(v) && v >= 0 && v <= 525600))].sort((a, b) => a - b);
+async function subscribe(request,env,user){const b=await safeJson(request),sub=b.subscription;if(!sub?.keys?.p256dh||!sub?.keys?.auth||!allowedEndpoint(sub.endpoint))throw problem('INVALID_SUBSCRIPTION');const now=new Date().toISOString();await env.DB.prepare(`INSERT INTO push_subscriptions(endpoint,user_sub,p256dh,auth,device_name,created_at,updated_at,last_seen_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_sub=excluded.user_sub,p256dh=excluded.p256dh,auth=excluded.auth,device_name=excluded.device_name,updated_at=excluded.updated_at,last_seen_at=excluded.last_seen_at`).bind(sub.endpoint,user.sub,sub.keys.p256dh,sub.keys.auth,String(b.device_name||'').slice(0,180),now,now,now).run();return {ok:true};}
+async function testPush(request,env,user){const b=await safeJson(request);const rows=await env.DB.prepare('SELECT * FROM push_subscriptions WHERE user_sub=? AND endpoint=?').bind(user.sub,String(b.endpoint||'')).all();let sent=0;const errors=[];for(const row of rows.results){const r=await pushOutcome(env,row,{title:'測試通知',body:'此裝置的提醒連線測試',url:'./',tag:'calendar-test'});if(r.status==='accepted')sent++;else errors.push(r.error)}return {ok:true,sent,errors};}
+async function diagnostics(env,user,access){const [subscriptions,result]=await env.DB.batch([env.DB.prepare('SELECT device_name,last_seen_at FROM push_subscriptions WHERE user_sub=?').bind(user.sub),env.DB.prepare(`SELECT pd.status,COUNT(*) AS n FROM push_deliveries pd JOIN reminders r ON r.id=pd.reminder_id JOIN push_subscriptions ps ON ps.endpoint=pd.endpoint WHERE r.workspace_id=? AND ps.user_sub=? GROUP BY pd.status`).bind(access.workspace_id,user.sub)]);return {ok:true,configured:!!(env.VAPID_PUBLIC_KEY&&env.VAPID_PRIVATE_KEY&&env.VAPID_SUBJECT),devices:subscriptions.results,deliveries:result.results};}
+async function rebuildPending(env){const jobs=await env.DB.prepare('SELECT * FROM reminder_rebuild_jobs LIMIT 3').all();for(const job of jobs.results){if(!tables[job.kind])continue;const rows=await env.DB.batch([env.DB.prepare(`SELECT * FROM ${job.kind} WHERE workspace_id=? AND id=?`).bind(job.workspace_id,job.item_id),env.DB.prepare('SELECT timezone FROM workspaces WHERE workspace_id=?').bind(job.workspace_id)]);const source=rows[0].results[0];if(source)await env.DB.batch(reminderStatements(env.DB,job.kind,convert(job.kind,source),source.user_sub,{workspace_id:job.workspace_id,timezone:rows[1].results[0]?.timezone||'Asia/Taipei'}));else await env.DB.prepare('DELETE FROM reminder_rebuild_jobs WHERE workspace_id=? AND kind=? AND item_id=?').bind(job.workspace_id,job.kind,job.item_id).run();}}
+async function processDueReminders(env){
+  await rebuildPending(env);const now=new Date().toISOString();
+  const due=await env.DB.prepare(`SELECT r.*,w.timezone,e.start_at AS source_start,e.repeat_rule,e.completed AS event_completed,e.deleted_at AS event_deleted,n.completed AS note_completed,n.deleted_at AS note_deleted,COALESCE(e.id,n.id) AS live_source_id FROM reminders r JOIN workspaces w ON w.workspace_id=r.workspace_id LEFT JOIN events e ON r.source_type='event' AND e.workspace_id=r.workspace_id AND e.id=r.source_id LEFT JOIN notes n ON r.source_type='note' AND n.workspace_id=r.workspace_id AND n.id=r.source_id WHERE r.cancelled=0 AND r.sent_at IS NULL AND r.trigger_at<=? AND EXISTS(SELECT 1 FROM push_subscriptions ps JOIN workspace_members wm ON wm.user_sub=ps.user_sub WHERE wm.workspace_id=r.workspace_id AND wm.status='active') ORDER BY r.trigger_at LIMIT 2`).bind(now).all();
+  let budget=4;
+  for(const reminder of due.results){
+    const lease=new Date(Date.now()+120000).toISOString();
+    const claim=await env.DB.prepare('INSERT INTO reminder_jobs(reminder_id,lease_until) VALUES(?,?) ON CONFLICT(reminder_id) DO UPDATE SET lease_until=excluded.lease_until WHERE reminder_jobs.lease_until<?').bind(reminder.id,lease,now).run();if(!claim.meta.changes)continue;
+    try{
+      if(!reminder.live_source_id||reminder.event_completed||reminder.note_completed||reminder.event_deleted||reminder.note_deleted){await env.DB.prepare('UPDATE reminders SET cancelled=1,updated_at=? WHERE id=?').bind(now,reminder.id).run();continue;}
+      if(reminder.source_type==='event'&&reminder.repeat_rule)await scheduleNextReminder(env,reminder);
+      const rows=await env.DB.prepare(`SELECT ps.*,pd.status AS delivery_status,pd.attempts,pd.next_retry_at,pd.lease_until FROM push_subscriptions ps JOIN workspace_members wm ON wm.user_sub=ps.user_sub LEFT JOIN push_deliveries pd ON pd.endpoint=ps.endpoint AND pd.reminder_id=? WHERE wm.workspace_id=? AND wm.status='active'`).bind(reminder.id,reminder.workspace_id).all();
+      const meta=parseJson(reminder.body,null);const occurrence=new Date(Date.parse(reminder.trigger_at)+Number(reminder.offset_minutes||0)*60000);const date=new Intl.DateTimeFormat('zh-TW',{timeZone:reminder.timezone||'Asia/Taipei',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(occurrence);
+      const payload={title:reminder.title,body:truncate(`${reminder.source_type==='event'?date+' · ':''}${meta?.text??reminder.body??''}`,180),url:`?open=${reminder.source_type}&id=${encodeURIComponent(reminder.source_id)}`,tag:`calendar-${reminder.id}`};
+      for(const sub of rows.results){
+        if(!budget)break;if(sub.delivery_status==='accepted'||sub.next_retry_at>now||sub.lease_until>now)continue;
+        const lock=await env.DB.prepare(`INSERT INTO push_deliveries(reminder_id,endpoint,status,attempts,lease_until) VALUES(?,?,'sending',1,?) ON CONFLICT(reminder_id,endpoint) DO UPDATE SET status='sending',attempts=attempts+1,lease_until=excluded.lease_until WHERE push_deliveries.status<>'accepted' AND (push_deliveries.lease_until IS NULL OR push_deliveries.lease_until<?)`).bind(reminder.id,sub.endpoint,lease,now).run();if(!lock.meta.changes)continue;budget--;
+        const outcome=await pushOutcome(env,sub,payload),accepted=outcome.status==='accepted';
+        await env.DB.prepare('UPDATE push_deliveries SET status=?,lease_until=NULL,next_retry_at=?,last_error=?,accepted_at=? WHERE reminder_id=? AND endpoint=? AND lease_until=?').bind(outcome.status,accepted?null:new Date(Date.now()+Math.min(3600000,60000*2**Math.min(Number(sub.attempts||0),6))).toISOString(),outcome.error||null,accepted?new Date().toISOString():null,reminder.id,sub.endpoint,lease).run();
+        if(outcome.status==='gone')await env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint=?').bind(sub.endpoint).run();
+      }
+      const pending=await env.DB.prepare(`SELECT COUNT(*) AS n FROM push_subscriptions ps JOIN workspace_members wm ON wm.user_sub=ps.user_sub LEFT JOIN push_deliveries pd ON pd.endpoint=ps.endpoint AND pd.reminder_id=? WHERE wm.workspace_id=? AND wm.status='active' AND (pd.status IS NULL OR pd.status<>'accepted')`).bind(reminder.id,reminder.workspace_id).first();
+      if(pending.n===0){const count=await env.DB.prepare("SELECT COUNT(*) AS n FROM push_deliveries WHERE reminder_id=? AND status='accepted'").bind(reminder.id).first();if(count.n>0){await env.DB.prepare('UPDATE reminders SET sent_at=?,updated_at=? WHERE id=? AND cancelled=0').bind(now,now,reminder.id).run();}}
+    }finally{await env.DB.prepare('DELETE FROM reminder_jobs WHERE reminder_id=? AND lease_until=?').bind(reminder.id,lease).run();}
+  }
 }
+export default {
+  async fetch(request,env){
+    const url=new URL(request.url),cors=corsHeaders(request,env);
+    if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
+    try{
+      const origin=request.headers.get('Origin');if(origin&&cors['Access-Control-Allow-Origin']==='null')throw problem('ORIGIN_DENIED',403);
+      if(url.pathname==='/api/health')return json({ok:true,version:'V2.0.0',service:'calendar-notes-pwa-api'},200,cors);
+      if(url.pathname==='/api/auth/config')return json({ok:true,persistent:persistentReady(env)},200,cors);
+      if(url.pathname==='/api/auth/code'&&request.method==='POST')return json(await exchangeCode(request,env),200,cors);
+      if(url.pathname==='/api/auth/logout'&&request.method==='POST')return json(await endSession(request,env),200,cors);
+      const user=await authenticate(request,env);await upsertUser(env.DB,user);
+      if(url.pathname==='/api/auth/token')return json({ok:true,accessToken:user.token,expiresIn:user.expiresIn||300,profile:user.profile},200,cors);
+      if(url.pathname==='/api/workspace/status')return workspaceStatus(env,user,cors);
+      if(url.pathname==='/api/workspace/join'&&request.method==='POST')return joinWorkspace(request,env,user,cors);
+      let access=await getWorkspaceAccess(env.DB,user.sub);if(!access)throw problem('WORKSPACE_REQUIRED',403);
+      if(!access.last_verified_at||Date.now()-Date.parse(access.last_verified_at)>5*60000){await workspaceStatus(env,user,cors);access=await getWorkspaceAccess(env.DB,user.sub);if(!access)throw problem('DRIVE_ACCESS_REVOKED',403);}
+      if(url.pathname==='/api/workspace/members')return workspaceMembers(env,access,cors);
+      if(url.pathname==='/api/sync')return json(await snapshot(env,access,url.searchParams.get('since')),200,cors);
+      if(url.pathname==='/api/snapshot')return json(await snapshot(env,access),200,cors);
+      if(url.pathname==='/api/restore'&&request.method==='POST')return json(await restore(request,env,user,access),200,cors);
+      if(url.pathname==='/api/settings'&&request.method==='PUT')return json(await putSettings(request,env,user,access),200,cors);
+      if(url.pathname==='/api/restore/history')return json({ok:true,history:(await env.DB.prepare('SELECT id,created_at FROM restore_history WHERE workspace_id=? ORDER BY created_at DESC LIMIT 10').bind(access.workspace_id).all()).results},200,cors);
+      if(url.pathname.startsWith('/api/restore/history/')){const r=await env.DB.prepare('SELECT payload FROM restore_history WHERE workspace_id=? AND id=?').bind(access.workspace_id,url.pathname.split('/').pop()).first();if(!r)throw problem('NOT_FOUND',404);return json(JSON.parse(r.payload),200,cors);}
+      const match=url.pathname.match(/^\/api\/(events|notes)\/([^/]+)$/);if(match&&['PUT','DELETE'].includes(request.method)){const r=await mutate(request,env,user,access,match[1],decodeURIComponent(match[2]));return r.conflict?json({ok:false,error:'REVISION_CONFLICT',server:r.server},409,cors):json(r,200,cors);}
+      if(url.pathname==='/api/push/subscribe'&&request.method==='POST')return json(await subscribe(request,env,user),200,cors);
+      if(url.pathname==='/api/push/unsubscribe'&&request.method==='POST'){const b=await safeJson(request);await env.DB.prepare('DELETE FROM push_subscriptions WHERE user_sub=? AND endpoint=?').bind(user.sub,String(b.endpoint||'')).run();return json({ok:true},200,cors);}
+      if(url.pathname==='/api/push/test'&&request.method==='POST')return json(await testPush(request,env,user),200,cors);
+      if(url.pathname==='/api/push/diagnostics')return json(await diagnostics(env,user,access),200,cors);
+      throw problem('NOT_FOUND',404);
+    }catch(e){console.error('request failed',e.status||500,e.message);return json({ok:false,error:e.status?e.message:'SERVER_ERROR'},e.status||500,cors);}
+  },
+  async scheduled(controller,env,ctx){ctx.waitUntil(processDueReminders(env));}
+};
 
-function parseJson(value, fallback) {
-  try { return JSON.parse(value); } catch { return fallback; }
-}
-
-async function safeJson(request) {
-  try { return await request.json(); } catch { return {}; }
-}
-
-function validateId(id) {
-  if (!/^[A-Za-z0-9._:-]{1,180}$/.test(id)) throw new Error('Invalid ID');
-}
-
-function truncate(s, n) {
-  s = String(s || '').replace(/\s+/g, ' ').trim();
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+async function scheduleNextReminder(env,r){
+ const trigger=nextTrigger({start_at:r.source_start,repeat_rule:r.repeat_rule},Number(r.offset_minutes||0),new Date(),r.timezone||'Asia/Taipei');if(!trigger)return;
+ const now=new Date().toISOString(),id=`event:${r.workspace_id}:${r.source_id}:${r.offset_minutes}:${trigger.toISOString()}`;
+ await env.DB.prepare(`INSERT OR IGNORE INTO reminders(id,user_sub,workspace_id,source_type,source_id,title,body,trigger_at,offset_minutes,created_at,updated_at,cancelled,sent_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,NULL)`).bind(id,r.user_sub,r.workspace_id,r.source_type,r.source_id,r.title,r.body,trigger.toISOString(),r.offset_minutes,now,now).run();
 }
