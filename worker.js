@@ -324,12 +324,12 @@ export default {
     if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
     try{
       const origin=request.headers.get('Origin');if(origin&&cors['Access-Control-Allow-Origin']==='null')throw problem('ORIGIN_DENIED',403);
-      if(url.pathname==='/api/health')return json({ok:true,version:'V2.0.0',service:'calendar-notes-pwa-api'},200,cors);
-      if(url.pathname==='/api/auth/config')return json({ok:true,persistent:persistentReady(env)},200,cors);
+      if(url.pathname==='/api/health')return json({ok:true,version:'V2.1.0',service:'calendar-notes-pwa-api'},200,cors);
+      if(url.pathname==='/api/auth/config')return json({ok:true,persistent:persistentReady(env),automaticResume:persistentReady(env),idleDays:30,maxDays:180},200,cors);
       if(url.pathname==='/api/auth/code'&&request.method==='POST')return json(await exchangeCode(request,env),200,cors);
       if(url.pathname==='/api/auth/logout'&&request.method==='POST')return json(await endSession(request,env),200,cors);
       const user=await authenticate(request,env);await upsertUser(env.DB,user);
-      if(url.pathname==='/api/auth/token')return json({ok:true,accessToken:user.token,expiresIn:user.expiresIn||300,profile:user.profile},200,cors);
+      if(url.pathname==='/api/auth/token')return json({ok:true,accessToken:user.token,expiresIn:user.expiresIn||300,profile:user.profile,persistent:!!user.persistent,sessionExpiresAt:user.sessionExpiresAt||0},200,cors);
       if(url.pathname==='/api/workspace/status')return workspaceStatus(env,user,cors);
       if(url.pathname==='/api/workspace/join'&&request.method==='POST')return joinWorkspace(request,env,user,cors);
       let access=await getWorkspaceAccess(env.DB,user.sub);if(!access)throw problem('WORKSPACE_REQUIRED',403);

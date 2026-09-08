@@ -1,4 +1,6 @@
-# V2.0.0 部署／升級步驟
+# V2.1.0 部署／升級步驟
+
+**為達成開啟即自動登入，第一次執行 `npm run deploy` 前必須完成 B 段的兩個 Worker secrets，部署後再於 App 重新授權一次。**
 
 ## A. 從本次附件 V1.6.6 升級
 
@@ -8,7 +10,7 @@
 
 ### 2. 安裝部署依賴
 
-Windows 解壓 ZIP，進入 `PWA-CalendarNotes-GD_V2_0_0` 資料夾，在 PowerShell 或終端機執行：
+Windows 解壓 ZIP，進入 `PWA-CalendarNotes-GD_V2_1_0` 資料夾，在 PowerShell 或終端機執行：
 
 ```powershell
 npm ci
@@ -39,13 +41,13 @@ npx wrangler d1 execute calendar-notes-pwa-db --remote --file=migrate_v2_0_0.sql
 npm run deploy
 ```
 
-沿用既有 Worker 名稱及 VAPID secrets，不要重新生成 VAPID 金鑰；更換金鑰會影響既有通知訂閱。
+沿用既有 Worker 名稱及 VAPID secrets，不要重新生成 VAPID 金鑰；更換金鑰會影響既有通知訂閱。若尚未設定自動登入 secrets，先完成 B 段再執行部署。
 
 在瀏覽器開啟：
 
 https://calendar-notes-pwa-api.rexchre.workers.dev/api/health
 
-應看到 `ok: true`、`version: "V2.0.0"`。若資料庫升級失敗，先處理錯誤，暫時不要更新前端。
+應看到 `ok: true`、`version: "V2.1.0"`。若資料庫升級失敗，先處理錯誤，暫時不要更新前端。
 
 ### 5. 更新 GitHub Pages
 
@@ -55,13 +57,13 @@ https://github.com/lihe-source/PWA-CalendarNotes-GD
 
 可以上傳根目錄全部交付檔案；只要保留 README 列出的前端必需檔也能執行前端，但 Worker 部署原始碼與 package-lock.json 建議一起保存。不要上傳 node_modules、秘密金鑰、OAuth Client Secret 或本機部署快取。
 
-等待 GitHub Pages 完成部署，再重新開啟 PWA。新版本會核對檔案完整性後切換；正在編輯時會先等編輯結束。設定頁應顯示 V2.0.0。
+等待 GitHub Pages 完成部署，再重新開啟 PWA。新版本會核對檔案完整性後切換；正在編輯時會先等編輯結束。設定頁應顯示 V2.1.0。
 
 若前端檔案尚未發布一致，App 會保留可用版本。等部署完成後，按「檢查更新」。不要為了更新而刪除 IndexedDB 或重設 App，以免移除未同步資料。
 
-## B. 啟用較穩定的持續登入
+## B. 必做：啟用自動登入
 
-新版已包含 Worker 端授權更新功能。**若未完成此段設定，App 會相容原有登入方式，但 Google access token 到期後仍可能需要重新登入。** 一進 App 顯示本機主畫面的行為不受影響。
+V2.1.0 的免按鈕自動登入依賴 Worker 端授權更新。**此段是自動登入的必要設定；若略過，短效 Google access token 到期後仍會要求重新登入。** App 仍會先顯示本機主畫面，但無法保證自動連線。
 
 ### 1. Google Cloud 設定
 
@@ -103,7 +105,7 @@ npx wrangler secret put AUTH_ENCRYPTION_KEY
 npm run deploy
 ```
 
-開啟 `/api/auth/config`，應看到 `persistent: true`。在 App 登出並登入一次，建立新版會話；之後可由 Worker 更新 Google 授權，減少重複操作。伺服器會話目前有效期為 30 天；授權被取消、Google 要求驗證或會話到期時，仍需重新登入。
+開啟 `/api/auth/config`，應看到 `persistent: true`。在 App 登出並重新授權一次，建立具備 refresh token 的新版會話；之後 App 每次開啟都會自動恢復該會話，由 Worker 更新 Google 授權並連接工作區。會話採 30 天閒置期限，每次正常使用會自動延長，單次授權最長 180 天；授權被取消、Google 要求驗證或最長期限到期時，仍需重新授權。
 
 D1 只存會話雜湊，Google access／refresh token 使用 AES-GCM 加密。AUTH_ENCRYPTION_KEY、GOOGLE_CLIENT_SECRET 都僅存在 Cloudflare secrets。
 

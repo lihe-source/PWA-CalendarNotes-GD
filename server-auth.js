@@ -1,6 +1,7 @@
 // Google refresh tokens are AES-GCM encrypted; opaque application sessions are stored as SHA-256 hashes.
 const encoder=new TextEncoder(),decoder=new TextDecoder();
 const legacyCache=new Map(),refreshes=new Map();
+const SESSION_IDLE_MS=30*86400000,SESSION_MAX_MS=180*86400000;
 const b64=bytes=>btoa(String.fromCharCode(...bytes));
 const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 const digest=async s=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(s)))).map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -19,9 +20,10 @@ export async function exchangeCode(request,env){
   const t=await googleToken({code:body.code,client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:origin,grant_type:'authorization_code'});const profile=await profileFor(t.access_token);
   let refresh=t.refresh_token||'';
   if(!refresh){const prior=await env.DB.prepare('SELECT refresh_cipher FROM app_sessions WHERE user_sub=? AND expires_at>? ORDER BY created_at DESC LIMIT 1').bind(profile.sub,Date.now()).first();if(prior)refresh=await decrypt(prior.refresh_cipher,env);}
+  if(!refresh)throw error('GOOGLE_OFFLINE_ACCESS_REQUIRED',409);
   const opaque='session.'+b64(crypto.getRandomValues(new Uint8Array(32))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-  const now=Date.now();await env.DB.prepare('INSERT INTO app_sessions(token_hash,user_sub,profile,access_cipher,refresh_cipher,access_expires,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(await digest(opaque),profile.sub,JSON.stringify(profile),await encrypt(t.access_token,env),await encrypt(refresh,env),now+Number(t.expires_in)*1000,now+30*86400000,now).run();
-  return {ok:true,sessionToken:opaque,accessToken:t.access_token,expiresIn:t.expires_in,profile,persistent:!!refresh};
+  const now=Date.now();await env.DB.prepare('INSERT INTO app_sessions(token_hash,user_sub,profile,access_cipher,refresh_cipher,access_expires,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(await digest(opaque),profile.sub,JSON.stringify(profile),await encrypt(t.access_token,env),await encrypt(refresh,env),now+Number(t.expires_in)*1000,now+SESSION_IDLE_MS,now).run();
+  return {ok:true,sessionToken:opaque,accessToken:t.access_token,expiresIn:t.expires_in,profile,persistent:true,sessionExpiresAt:now+SESSION_IDLE_MS};
 }
 export async function authenticate(request,env){
   const value=request.headers.get('Authorization')||'';if(!value.startsWith('Bearer '))throw error('UNAUTHORIZED');const token=value.slice(7).trim();if(!token)throw error('UNAUTHORIZED');
@@ -37,7 +39,9 @@ export async function authenticate(request,env){
       })().finally(()=>refreshes.delete(hash)));
       await refreshes.get(hash);row=await env.DB.prepare('SELECT * FROM app_sessions WHERE token_hash=? AND expires_at>?').bind(hash,Date.now()).first();if(!row)throw error('UNAUTHORIZED');
     }
-    const profile=JSON.parse(row.profile);return {sub:profile.sub,email:profile.email||'',name:profile.name||'',profile,token:await decrypt(row.access_cipher,env),sessionHash:hash,expiresIn:Math.max(0,Math.floor((row.access_expires-Date.now())/1000))};
+    const now=Date.now(),sessionExpiresAt=Math.min(Number(row.created_at)+SESSION_MAX_MS,now+SESSION_IDLE_MS);
+    if(sessionExpiresAt>Number(row.expires_at)+3600000)await env.DB.prepare('UPDATE app_sessions SET expires_at=? WHERE token_hash=?').bind(sessionExpiresAt,hash).run();
+    const profile=JSON.parse(row.profile);return {sub:profile.sub,email:profile.email||'',name:profile.name||'',profile,token:await decrypt(row.access_cipher,env),sessionHash:hash,expiresIn:Math.max(0,Math.floor((row.access_expires-now)/1000)),persistent:!!row.refresh_cipher,sessionExpiresAt};
   }
   let cached=legacyCache.get(hash);if(!cached||cached.until<Date.now()){const profile=await profileFor(token);cached={profile,until:Date.now()+60000};if(legacyCache.size>250)legacyCache.clear();legacyCache.set(hash,cached)}
   const p=cached.profile;return {sub:p.sub,email:p.email||'',name:p.name||p.email||'',profile:p,token};

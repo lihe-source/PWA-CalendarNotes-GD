@@ -1,12 +1,12 @@
 import {initializeStore,setScope,getScope,all,put,getMeta,setMeta,listQueue,applyRemote,replaceSnapshot,readLegacy,migrateLegacy,acknowledge,guestRecords} from './db.js';
 import {api,getAccessToken,getSessionToken,saveRemote,deleteRemote,flushQueue} from './api.js';
-import {restoreSession,refreshAccess,prepareLogin,login,logout,getAuthConfig} from './auth.js';
+import {restoreSession,resumeAuthentication,getAuthState,refreshAccess,prepareLogin,login,logout,getAuthConfig} from './auth.js';
 import {extractFolderId,ensureAppFolders,getOrCreateItemFolder,uploadFile,uploadJson,listLatestBackups,downloadJson} from './google-drive.js';
 import {enablePush,subscriptionState,disconnectPush,testPush} from './push.js';
 import {getTaiwanHoliday,TAIWAN_HOLIDAY_OFFICIAL_YEARS} from './holidays.js';
 import {occursOn,occurrenceAt,zonedParts,dateKeyInZone,fromZoned,validTimezone} from './recurrence.js';
 const cfg=window.APP_CONFIG,$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const state={events:[],notes:[],profile:null,workspace:null,members:[],view:'calendar',filter:'all',selected:'',year:0,month:0,timezone:cfg.DEFAULT_TIMEZONE,driveRoot:'',folders:null,categories:['工作','會議','生活'],editing:null,saving:false,restoring:false,backingUp:false,syncing:false,lastSync:null,authReady:false};
+const state={events:[],notes:[],profile:null,workspace:null,members:[],view:'calendar',filter:'all',selected:'',year:0,month:0,timezone:cfg.DEFAULT_TIMEZONE,driveRoot:'',folders:null,categories:['工作','會議','生活'],editing:null,saving:false,restoring:false,backingUp:false,syncing:false,lastSync:null,authReady:false,authBusy:false};
 let connectionPromise=null,syncPromise=null,toastTimer,legacy=null,uploadController=null,pendingRestore=null,registration=null,updatePromise=null,waitingVersion='',draftTimer,lastMembersAt=0;
 const icon=name=>`<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -18,7 +18,7 @@ const formatDateTime=iso=>iso?new Intl.DateTimeFormat('zh-TW',{timeZone:state.ti
 const today=()=>dateKeyInZone(new Date(),state.timezone);
 const dateKey=(y,m,d)=>`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 const bytes=n=>Number(n)>1048576?`${(n/1048576).toFixed(1)} MB`:`${Math.ceil(Number(n||0)/1024)} KB`;
-function friendly(e){const m=e?.message||String(e);return {GOOGLE_LOGIN_REQUIRED:'Google 授權需要更新，請在設定頁重新登入；本機資料已保留。',UNAUTHORIZED:'Google 授權已到期，請重新登入。',WORKSPACE_REQUIRED:'請先加入共享工作區。',READ_ONLY_MEMBER:'目前帳號為唯讀，無法修改資料。',ACCOUNT_CHANGED:'帳號已切換，已停止上一個帳號的同步。',RESTORE_CONFLICT:'其他成員剛更新資料，還原已中止。請重新預覽備份。',WORKSPACE_FOLDER_MISMATCH:'備份或資料夾屬於另一個共享工作區。',DRIVE_ACCESS_REVOKED:'共用資料夾權限已移除。',SERVER_ERROR:'伺服器未能完成操作。若剛升級，請先完成資料庫升級及 Worker 部署。',INVALID_TIMEZONE:'請輸入有效時區，例如 Asia/Taipei。'}[m]||(e?.name==='TimeoutError'?'連線逾時；本機內容已保留，稍後可重試。':e?.name==='AbortError'?'操作已取消；已儲存的文字仍保留。':m);}
+function friendly(e){const m=e?.message||String(e);return {GOOGLE_LOGIN_REQUIRED:'Google 授權需要更新，請在設定頁重新登入；本機資料已保留。',UNAUTHORIZED:'Google 授權已到期，請重新登入。',WORKSPACE_REQUIRED:'請先加入共享工作區。',READ_ONLY_MEMBER:'目前帳號為唯讀，無法修改資料。',ACCOUNT_CHANGED:'帳號已切換，已停止上一個帳號的同步。',RESTORE_CONFLICT:'其他成員剛更新資料，還原已中止。請重新預覽備份。',WORKSPACE_FOLDER_MISMATCH:'備份或資料夾屬於另一個共享工作區。',DRIVE_ACCESS_REVOKED:'共用資料夾權限已移除。',SERVER_ERROR:'伺服器未能完成操作。若剛升級，請先完成資料庫升級及 Worker 部署。',INVALID_TIMEZONE:'請輸入有效時區，例如 Asia/Taipei。',GOOGLE_OFFLINE_ACCESS_REQUIRED:'Google 尚未提供持續登入權限，請重新授權一次。',PERSISTENT_AUTH_NOT_CONFIGURED:'自動登入尚未完成伺服器設定。'}[m]||(e?.name==='TimeoutError'?'連線逾時；本機內容已保留，稍後可重試。':e?.name==='AbortError'?'操作已取消；已儲存的文字仍保留。':m);}
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),5000)}
 function status(message){$('#statusLine').textContent=message}
 async function loadLocal(){[state.events,state.notes]=await Promise.all([all('events'),all('notes')]);state.events=state.events.filter(x=>!x.deleted_at);state.notes=state.notes.filter(x=>!x.deleted_at);state.lastSync=await getMeta('lastSyncAt',null);state.categories=await getMeta('categories',['工作','會議','生活']);state.timezone=await getMeta('timezone',cfg.DEFAULT_TIMEZONE);$('#timezoneInput').value=state.timezone;}
@@ -36,13 +36,13 @@ async function boot(){
   $('#currentVersion').textContent=cfg.VERSION;$('#headerVersion').textContent=cfg.VERSION;
   bindUi();renderAll();updateQueueStatus();setupViewport();
   registerWorker().then(()=>checkUpdate(true)).catch(e=>{$('#updateStatus').textContent=friendly(e)});
-  prepareLogin().then(()=>{state.authReady=true;renderSettings()}).catch(()=>{});
-  if(state.profile&&connected()&&navigator.onLine)task(()=>connectWorkspace(false));
+  prepareLogin().catch(()=>{}).finally(()=>{state.authReady=true;renderSettings()});
+  if(state.profile&&connected()&&navigator.onLine)task(()=>resumeAutomaticLogin());
   else status(state.profile?'本機資料已載入；連線後自動同步':'本機模式 · 登入後可同步');
   setInterval(()=>{if(document.visibilityState==='visible'&&connected()&&navigator.onLine&&!state.restoring)task(()=>syncAll(false))},cfg.AUTO_SYNC_INTERVAL_MS);
-  addEventListener('online',()=>{status('已連線，準備同步…');if(connected())task(()=>syncAll(false));task(()=>checkUpdate(true))});
+  addEventListener('online',()=>{status('已連線，準備同步…');task(()=>prepareLogin().finally(()=>{state.authReady=true;renderSettings()}));if(connected())task(()=>resumeAutomaticLogin());task(()=>checkUpdate(true))});
   addEventListener('offline',()=>status('離線模式 · 修改保留在此裝置'));
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){task(()=>checkUpdate(true));if(connected()&&navigator.onLine)task(()=>syncAll(false))}});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){task(()=>checkUpdate(true));if(connected()&&navigator.onLine)task(()=>resumeAutomaticLogin())}});
   addEventListener('beforeunload',e=>{if(state.saving||state.restoring){e.preventDefault();e.returnValue=''}});
   openDeepLink(location.href);
 }
@@ -103,9 +103,11 @@ function renderNotes(){
     card.querySelector('.note-open').onclick=()=>task(()=>openEditor('notes',n));card.querySelector('.note-done').disabled=!canEdit();card.querySelector('.note-done').onclick=()=>task(async()=>{if(!canEdit())return;await saveRemote('notes',{...n,completed:!n.completed,updated_at:new Date().toISOString()});await loadLocal();renderAll();updateQueueStatus();if(connected())task(()=>syncAll(false))});box.append(card)}
 }
 function renderSettings(){
-  const p=state.profile;$('#googleIdentityCard').classList.toggle('hidden',!p);$('#googleLoginBtn').classList.toggle('hidden',!!p&&connected());$('#googleLogoutBtn').classList.toggle('hidden',!p);$('#googleLoginBtn').textContent=p?'重新登入 Google':'登入 Google';
-  if(p){$('#googleIdentityName').textContent=p.name||p.email;$('#googleIdentityEmail').textContent=p.email||'';$('#googleIdentityBadge').textContent=connected()?'已連線':'已記住';$('#googleAvatarFallback').textContent=(p.name||p.email||'G')[0];$('#navAvatar').textContent=(p.name||p.email||'G')[0];$('#navName').textContent=p.name||'Google 使用者'}else{$('#navAvatar').textContent='○';$('#navName').textContent='本機模式'}
-  $('#googleStatus').textContent=p?(connected()?'帳號已連線，資料會在背景同步。':'帳號已記住，本機內容可使用；請重新授權以繼續同步。'):'尚未登入；可以先使用本機功能。';
+  const p=state.profile,auth=getAuthState(),active=connected(),retrying=auth.phase==='temporarily-unavailable'||auth.phase==='offline';$('#googleIdentityCard').classList.toggle('hidden',!p);$('#googleLoginBtn').classList.toggle('hidden',!!p&&active&&auth.persistent);$('#googleLogoutBtn').classList.toggle('hidden',!p);$('#googleLoginBtn').textContent=p?'重新授權 Google':'首次連線 Google';
+  if(p){$('#googleIdentityName').textContent=p.name||p.email;$('#googleIdentityEmail').textContent=p.email||'';$('#googleIdentityBadge').textContent=state.authBusy?'登入中':retrying?'待重試':active?(auth.persistent?'自動登入':'已連線'):'需授權';$('#googleAvatarFallback').textContent=(p.name||p.email||'G')[0];$('#navAvatar').textContent=(p.name||p.email||'G')[0];$('#navName').textContent=p.name||'Google 使用者'}else{$('#navAvatar').textContent='○';$('#navName').textContent='本機模式'}
+  $('#googleStatus').textContent=state.authBusy?'正在背景恢復 Google 登入與共享資料…':retrying?'目前離線或服務暫時無法連線；稍後會自動重試。':p?(active?'帳號已連線，資料會在背景同步。':'授權已失效；本機資料仍保留。'):'首次使用需完成一次 Google 授權。';
+  const expiryText=auth.sessionExpiresAt?` · 閒置期限 ${formatDateTime(new Date(auth.sessionExpiresAt))}`:'';
+  $('#autoLoginStatus').textContent=auth.persistent?`自動登入已啟用${expiryText}`:!state.authReady?'正在檢查自動登入設定…':auth.serverReady?(p?'目前會話尚未取得持續登入權限，請重新授權一次。':'自動登入服務已就緒；首次連線後會自動保持登入。'):auth.configAvailable?'自動登入需要部署 Worker secrets；請依 DEPLOY.md 設定。':'暫時無法確認自動登入服務，恢復連線後會重試。';
   $('#workspaceStatus').textContent=state.workspace?`${state.workspace.name||'共享行事曆'} · ${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace.role]||''} · ${state.members.length||'—'} 位成員`:'登入後可加入共享工作區。';
   $('#workspaceMembers').innerHTML=state.members.map(m=>`<div class="workspace-member">${esc(m.name||m.email)}<small>${esc(m.email)} · ${{owner:'擁有者',editor:'編輯者',viewer:'唯讀'}[m.role]||''}</small></div>`).join('');$('#driveStatus').textContent=state.workspace?'共享資料夾已連線':state.driveRoot?'已記住資料夾，等待連線確認':'';$('#lastSync').textContent=formatDateTime(state.lastSync);
   ['quickAddBtn','addEventBtn','addNoteBtn','saveItemBtn','deleteItemBtn','restoreBtn','addCategoryBtn'].forEach(id=>$('#'+id).disabled=!canEdit());$('#backupBtn').disabled=state.backingUp||state.saving||state.restoring||state.workspace?.role==='viewer';$('#syncBtn').disabled=state.syncing||state.restoring;$('#timezoneInput').disabled=state.workspace?.role==='viewer';renderCategories();
@@ -171,6 +173,18 @@ async function saveEditor(){
   finally{state.saving=false;uploadController=null;$('#uploadPanel').classList.add('hidden');$('#editorCloseBtn').disabled=false;$('#editorCancelBtn').disabled=false;await loadLocal();renderAll();await updateQueueStatus();if(connected())task(()=>syncAll(false));activateReadyUpdate()}
 }
 async function deleteEditor(){if(!canEdit()||!state.editing?.existing)return;const ed=state.editing;if(!confirm(`刪除「${ed.item.title}」？已上傳的 Drive 附件會保留。`))return;await deleteRemote(ed.kind,ed.item);await setMeta('draft:'+ed.kind,null);ed.dirty=false;await closeEditor();await loadLocal();renderAll();updateQueueStatus();toast('刪除已儲存，連線後同步');if(connected())task(()=>syncAll(false))}
+let autoLoginPromise=null;
+async function resumeAutomaticLogin(){
+  if(autoLoginPromise)return autoLoginPromise;
+  if(!state.profile||!connected()){renderSettings();return}
+  if(!navigator.onLine){status('離線模式 · 已載入帳號本機資料');renderSettings();return}
+  autoLoginPromise=(async()=>{
+    state.authBusy=true;status('正在自動登入…');renderSettings();
+    try{const profile=await resumeAuthentication();if(profile)state.profile=profile;renderSettings();await connectWorkspace(false)}
+    catch(e){console.error('automatic sign-in failed',e);renderSettings();status(e.status===401?'Google 授權需要更新 · 本機資料已保留':'自動登入暫時無法連線 · 稍後會重試')}
+    finally{state.authBusy=false;renderSettings();autoLoginPromise=null}
+  })();return autoLoginPromise;
+}
 async function onLogin(profile){
   if(syncPromise)await syncPromise.catch(()=>{});if(state.saving||state.restoring)return;
   state.profile=profile;state.workspace=null;state.folders=null;state.members=[];
