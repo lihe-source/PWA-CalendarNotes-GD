@@ -36,13 +36,13 @@ async function boot(){
   $('#currentVersion').textContent=cfg.VERSION;$('#headerVersion').textContent=cfg.VERSION;
   bindUi();renderAll();updateQueueStatus();setupViewport();
   registerWorker().then(()=>checkUpdate(true)).catch(e=>{$('#updateStatus').textContent=friendly(e)});
-  prepareLogin().catch(()=>{}).finally(()=>{state.authReady=true;renderSettings()});
+  prepareLogin().then(()=>{state.authReady=true;renderSettings();if(state.profile&&!connected())task(()=>resumeAutomaticLogin())}).catch(()=>{state.authReady=true;renderSettings()});
   if(state.profile&&connected()&&navigator.onLine)task(()=>resumeAutomaticLogin());
   else status(state.profile?'本機資料已載入；連線後自動同步':'本機模式 · 登入後可同步');
   setInterval(()=>{if(document.visibilityState==='visible'&&connected()&&navigator.onLine&&!state.restoring)task(()=>syncAll(false))},cfg.AUTO_SYNC_INTERVAL_MS);
-  addEventListener('online',()=>{status('已連線，準備同步…');task(()=>prepareLogin().finally(()=>{state.authReady=true;renderSettings()}));if(connected())task(()=>resumeAutomaticLogin());task(()=>checkUpdate(true))});
+  addEventListener('online',()=>{status('已連線，準備同步…');task(()=>prepareLogin().finally(()=>{state.authReady=true;renderSettings()}));if(state.profile)task(()=>resumeAutomaticLogin());task(()=>checkUpdate(true))});
   addEventListener('offline',()=>status('離線模式 · 修改保留在此裝置'));
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){task(()=>checkUpdate(true));if(connected()&&navigator.onLine)task(()=>resumeAutomaticLogin())}});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){task(()=>checkUpdate(true));if(state.profile&&navigator.onLine)task(()=>resumeAutomaticLogin())}});
   addEventListener('beforeunload',e=>{if(state.saving||state.restoring){e.preventDefault();e.returnValue=''}});
   openDeepLink(location.href);
 }
@@ -103,11 +103,11 @@ function renderNotes(){
     card.querySelector('.note-open').onclick=()=>task(()=>openEditor('notes',n));card.querySelector('.note-done').disabled=!canEdit();card.querySelector('.note-done').onclick=()=>task(async()=>{if(!canEdit())return;await saveRemote('notes',{...n,completed:!n.completed,updated_at:new Date().toISOString()});await loadLocal();renderAll();updateQueueStatus();if(connected())task(()=>syncAll(false))});box.append(card)}
 }
 function renderSettings(){
-  const p=state.profile,auth=getAuthState(),active=connected(),retrying=auth.phase==='temporarily-unavailable'||auth.phase==='offline';$('#googleIdentityCard').classList.toggle('hidden',!p);$('#googleLoginBtn').classList.toggle('hidden',!!p&&active&&auth.persistent);$('#googleLogoutBtn').classList.toggle('hidden',!p);$('#googleLoginBtn').textContent=p?'重新授權 Google':'首次連線 Google';
-  if(p){$('#googleIdentityName').textContent=p.name||p.email;$('#googleIdentityEmail').textContent=p.email||'';$('#googleIdentityBadge').textContent=state.authBusy?'登入中':retrying?'待重試':active?(auth.persistent?'自動登入':'已連線'):'需授權';$('#googleAvatarFallback').textContent=(p.name||p.email||'G')[0];$('#navAvatar').textContent=(p.name||p.email||'G')[0];$('#navName').textContent=p.name||'Google 使用者'}else{$('#navAvatar').textContent='○';$('#navName').textContent='本機模式'}
+  const p=state.profile,auth=getAuthState(),active=connected(),automatic=auth.persistent||auth.phase==='legacy-auto',retrying=auth.phase==='temporarily-unavailable'||auth.phase==='offline';$('#googleIdentityCard').classList.toggle('hidden',!p);$('#googleLoginBtn').classList.toggle('hidden',!!p&&active);$('#googleLogoutBtn').classList.toggle('hidden',!p);$('#googleLoginBtn').textContent=p?'重新授權 Google':'首次連線 Google';
+  if(p){$('#googleIdentityName').textContent=p.name||p.email;$('#googleIdentityEmail').textContent=p.email||'';$('#googleIdentityBadge').textContent=state.authBusy?'登入中':retrying?'待重試':active?(automatic?'自動登入':'已連線'):'需授權';$('#googleAvatarFallback').textContent=(p.name||p.email||'G')[0];$('#navAvatar').textContent=(p.name||p.email||'G')[0];$('#navName').textContent=p.name||'Google 使用者'}else{$('#navAvatar').textContent='○';$('#navName').textContent='本機模式'}
   $('#googleStatus').textContent=state.authBusy?'正在背景恢復 Google 登入與共享資料…':retrying?'目前離線或服務暫時無法連線；稍後會自動重試。':p?(active?'帳號已連線，資料會在背景同步。':'授權已失效；本機資料仍保留。'):'首次使用需完成一次 Google 授權。';
   const expiryText=auth.sessionExpiresAt?` · 閒置期限 ${formatDateTime(new Date(auth.sessionExpiresAt))}`:'';
-  $('#autoLoginStatus').textContent=auth.persistent?`自動登入已啟用${expiryText}`:!state.authReady?'正在檢查自動登入設定…':auth.serverReady?(p?'目前會話尚未取得持續登入權限，請重新授權一次。':'自動登入服務已就緒；首次連線後會自動保持登入。'):auth.configAvailable?'自動登入需要部署 Worker secrets；請依 DEPLOY.md 設定。':'暫時無法確認自動登入服務，恢復連線後會重試。';
+  $('#autoLoginStatus').textContent=auth.persistent?`伺服器自動登入已啟用${expiryText}`:auth.phase==='legacy-auto'?'已透過瀏覽器的 Google 工作階段自動登入，不需要再按重新授權。':!state.authReady?'正在檢查自動登入設定…':auth.serverReady?(p?'正在改用現有 Google 工作階段自動連線。':'自動登入服務已就緒；首次連線後會自動保持登入。'):auth.configAvailable?'已啟用瀏覽器工作階段自動登入；伺服器長效登入設定見 DEPLOY.md。':'暫時無法確認自動登入服務，恢復連線後會重試。';
   $('#workspaceStatus').textContent=state.workspace?`${state.workspace.name||'共享行事曆'} · ${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace.role]||''} · ${state.members.length||'—'} 位成員`:'登入後可加入共享工作區。';
   $('#workspaceMembers').innerHTML=state.members.map(m=>`<div class="workspace-member">${esc(m.name||m.email)}<small>${esc(m.email)} · ${{owner:'擁有者',editor:'編輯者',viewer:'唯讀'}[m.role]||''}</small></div>`).join('');$('#driveStatus').textContent=state.workspace?'共享資料夾已連線':state.driveRoot?'已記住資料夾，等待連線確認':'';$('#lastSync').textContent=formatDateTime(state.lastSync);
   ['quickAddBtn','addEventBtn','addNoteBtn','saveItemBtn','deleteItemBtn','restoreBtn','addCategoryBtn'].forEach(id=>$('#'+id).disabled=!canEdit());$('#backupBtn').disabled=state.backingUp||state.saving||state.restoring||state.workspace?.role==='viewer';$('#syncBtn').disabled=state.syncing||state.restoring;$('#timezoneInput').disabled=state.workspace?.role==='viewer';renderCategories();
@@ -176,7 +176,7 @@ async function deleteEditor(){if(!canEdit()||!state.editing?.existing)return;con
 let autoLoginPromise=null;
 async function resumeAutomaticLogin(){
   if(autoLoginPromise)return autoLoginPromise;
-  if(!state.profile||!connected()){renderSettings();return}
+  if(!state.profile){renderSettings();return}
   if(!navigator.onLine){status('離線模式 · 已載入帳號本機資料');renderSettings();return}
   autoLoginPromise=(async()=>{
     state.authBusy=true;status('正在自動登入…');renderSettings();

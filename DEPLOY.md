@@ -1,4 +1,4 @@
-# V2.1.0 部署／升級步驟
+# V2.2.0 部署／升級步驟
 
 **為達成開啟即自動登入，第一次執行 `npm run deploy` 前必須完成 B 段的兩個 Worker secrets，部署後再於 App 重新授權一次。**
 
@@ -10,7 +10,7 @@
 
 ### 2. 安裝部署依賴
 
-Windows 解壓 ZIP，進入 `PWA-CalendarNotes-GD_V2_1_0` 資料夾，在 PowerShell 或終端機執行：
+Windows 解壓 ZIP，進入 `PWA-CalendarNotes-GD_V2_2_0` 資料夾，在 PowerShell 或終端機執行：
 
 ```powershell
 npm ci
@@ -47,7 +47,7 @@ npm run deploy
 
 https://calendar-notes-pwa-api.rexchre.workers.dev/api/health
 
-應看到 `ok: true`、`version: "V2.1.0"`。若資料庫升級失敗，先處理錯誤，暫時不要更新前端。
+應看到 `ok: true`、`version: "V2.2.0"`。若資料庫升級失敗，先處理錯誤，暫時不要更新前端。
 
 ### 5. 更新 GitHub Pages
 
@@ -57,13 +57,13 @@ https://github.com/lihe-source/PWA-CalendarNotes-GD
 
 可以上傳根目錄全部交付檔案；只要保留 README 列出的前端必需檔也能執行前端，但 Worker 部署原始碼與 package-lock.json 建議一起保存。不要上傳 node_modules、秘密金鑰、OAuth Client Secret 或本機部署快取。
 
-等待 GitHub Pages 完成部署，再重新開啟 PWA。新版本會核對檔案完整性後切換；正在編輯時會先等編輯結束。設定頁應顯示 V2.1.0。
+等待 GitHub Pages 完成部署，再重新開啟 PWA。新版本會核對檔案完整性後切換；正在編輯時會先等編輯結束。設定頁應顯示 V2.2.0。
 
 若前端檔案尚未發布一致，App 會保留可用版本。等部署完成後，按「檢查更新」。不要為了更新而刪除 IndexedDB 或重設 App，以免移除未同步資料。
 
 ## B. 必做：啟用自動登入
 
-V2.1.0 的免按鈕自動登入依賴 Worker 端授權更新。**此段是自動登入的必要設定；若略過，短效 Google access token 到期後仍會要求重新登入。** App 仍會先顯示本機主畫面，但無法保證自動連線。
+V2.2.0 的免按鈕自動登入依賴 Worker 端授權更新。**此段是自動登入的必要設定；若略過，短效 Google access token 到期後仍會要求重新登入。** App 仍會先顯示本機主畫面，但無法保證自動連線。
 
 ### 1. Google Cloud 設定
 

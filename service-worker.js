@@ -1,4 +1,4 @@
-const VERSION='V2.1.0';
+const VERSION='V2.2.0';
 const PREFIX=`calendar-notes:${new URL(self.registration.scope).pathname}:`;
 const CACHE=PREFIX+VERSION;
 const CORE=['./','./index.html','./style.css','./config.js','./app.js','./db.js','./api.js','./auth.js','./recurrence.js','./google-drive.js','./push.js','./holidays.js','./manifest.json','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
