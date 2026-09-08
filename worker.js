@@ -324,7 +324,7 @@ export default {
     if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
     try{
       const origin=request.headers.get('Origin');if(origin&&cors['Access-Control-Allow-Origin']==='null')throw problem('ORIGIN_DENIED',403);
-      if(url.pathname==='/api/health')return json({ok:true,version:'V2.2.0',service:'calendar-notes-pwa-api'},200,cors);
+      if(url.pathname==='/api/health')return json({ok:true,version:'V2.2.1',service:'calendar-notes-pwa-api'},200,cors);
       if(url.pathname==='/api/auth/config')return json({ok:true,persistent:persistentReady(env),automaticResume:persistentReady(env),idleDays:30,maxDays:180},200,cors);
       if(url.pathname==='/api/auth/code'&&request.method==='POST')return json(await exchangeCode(request,env),200,cors);
       if(url.pathname==='/api/auth/logout'&&request.method==='POST')return json(await endSession(request,env),200,cors);

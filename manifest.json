@@ -1,8 +1,8 @@
 {
   "name": "行事曆・備註",
   "short_name": "行事曆備註",
-  "start_url": "./",
-  "scope": "./",
+  "start_url": "/PWA-CalendarNotes-GD/",
+  "scope": "/PWA-CalendarNotes-GD/",
   "display": "standalone",
   "background_color": "#111a24",
   "theme_color": "#111a24",
@@ -20,7 +20,7 @@
       "purpose": "any maskable"
     }
   ],
-  "id": "./",
+  "id": "/PWA-CalendarNotes-GD/",
   "shortcuts": [
     {
       "name": "新增行程",
