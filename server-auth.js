@@ -8,16 +8,19 @@ const digest=async s=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-
 const error=(s,status=401)=>Object.assign(new Error(s),{status});
 export const persistentReady=env=>!!(env.GOOGLE_CLIENT_ID&&env.GOOGLE_CLIENT_SECRET&&env.AUTH_ENCRYPTION_KEY);
 async function key(env){const raw=unb64(env.AUTH_ENCRYPTION_KEY);if(raw.length!==32)throw error('AUTH_KEY_INVALID',503);return crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt','decrypt']);}
-async function encrypt(s,env){if(!s)return '';const iv=crypto.getRandomValues(new Uint8Array(12));const data=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await key(env),encoder.encode(s)));return `${b64(iv)}.${b64(data)}`;}
-async function decrypt(s,env){if(!s)return '';const [iv,data]=s.split('.');return decoder.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(iv)},await key(env),unb64(data)));}
-async function googleToken(parameters){const r=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(parameters),signal:AbortSignal.timeout(15000)});const d=await r.json();if(!r.ok)throw error(d.error==='invalid_grant'?'GOOGLE_LOGIN_REQUIRED':'GOOGLE_AUTH_TEMPORARILY_UNAVAILABLE',d.error==='invalid_grant'?401:503);return d;}
-async function profileFor(token){const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});if(!r.ok)throw error('UNAUTHORIZED',r.status>=500?503:401);const p=await r.json();if(!p.sub)throw error('UNAUTHORIZED');return p;}
+export async function encrypt(s,env){if(!s)return '';const iv=crypto.getRandomValues(new Uint8Array(12));const data=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await key(env),encoder.encode(s)));return `${b64(iv)}.${b64(data)}`;}
+export async function decrypt(s,env){if(!s)return '';const [iv,data]=s.split('.');return decoder.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(iv)},await key(env),unb64(data)));}
+export async function googleToken(parameters){const r=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(parameters),signal:AbortSignal.timeout(15000)});const d=await r.json();if(!r.ok)throw error(d.error==='invalid_grant'?'GOOGLE_LOGIN_REQUIRED':'GOOGLE_AUTH_TEMPORARILY_UNAVAILABLE',d.error==='invalid_grant'?401:503);return d;}
+export async function profileFor(token){const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});if(!r.ok)throw error('UNAUTHORIZED',r.status>=500?503:401);const p=await r.json();if(!p.sub)throw error('UNAUTHORIZED');return p;}
 export async function exchangeCode(request,env){
   if(!persistentReady(env))throw error('PERSISTENT_AUTH_NOT_CONFIGURED',503);
   const origin=request.headers.get('Origin'),allowed=String(env.ALLOWED_ORIGINS||'').split(',').map(x=>x.trim());
   if(!allowed.includes(origin)||request.headers.get('X-Requested-With')!=='CalendarNotesPWA')throw error('ORIGIN_DENIED',403);
   const body=await request.json();if(!body.code||body.redirect_uri!==origin)throw error('INVALID_AUTH_REQUEST',400);
   const t=await googleToken({code:body.code,client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:origin,grant_type:'authorization_code'});const profile=await profileFor(t.access_token);
+  return createSession(t,profile,env);
+}
+export async function createSession(t,profile,env){
   let refresh=t.refresh_token||'';
   if(!refresh){const prior=await env.DB.prepare('SELECT refresh_cipher FROM app_sessions WHERE user_sub=? AND expires_at>? ORDER BY created_at DESC LIMIT 1').bind(profile.sub,Date.now()).first();if(prior)refresh=await decrypt(prior.refresh_cipher,env);}
   if(!refresh)throw error('GOOGLE_OFFLINE_ACCESS_REQUIRED',409);
