@@ -1,4 +1,3 @@
-import {desktopRoute} from './desktop-auth.js';
 import {sendPushNotification,WebPushError} from '@mmmike/web-push/send';
 import {authenticate,persistentReady,exchangeCode,endSession} from './server-auth.js';
 import {nextTrigger,occurrenceAt,dateKeyInZone,validTimezone} from './recurrence.js';
@@ -325,9 +324,8 @@ export default {
     if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
     try{
       const origin=request.headers.get('Origin');if(origin&&cors['Access-Control-Allow-Origin']==='null')throw problem('ORIGIN_DENIED',403);
-      if(url.pathname.startsWith('/api/desktop/'))return await desktopRoute(request,env,cors);
       if(url.pathname==='/api/health')return json({ok:true,version:'V2.2.1',service:'calendar-notes-pwa-api'},200,cors);
-      if(url.pathname==='/api/auth/config')return json({ok:true,persistent:persistentReady(env),automaticResume:persistentReady(env),desktopAuthVersion:1,clientId:env.GOOGLE_CLIENT_ID||'',idleDays:30,maxDays:180},200,cors);
+      if(url.pathname==='/api/auth/config')return json({ok:true,persistent:persistentReady(env),automaticResume:persistentReady(env),idleDays:30,maxDays:180},200,cors);
       if(url.pathname==='/api/auth/code'&&request.method==='POST')return json(await exchangeCode(request,env),200,cors);
       if(url.pathname==='/api/auth/logout'&&request.method==='POST')return json(await endSession(request,env),200,cors);
       const user=await authenticate(request,env);await upsertUser(env.DB,user);
@@ -336,15 +334,6 @@ export default {
       if(url.pathname==='/api/workspace/join'&&request.method==='POST')return joinWorkspace(request,env,user,cors);
       let access=await getWorkspaceAccess(env.DB,user.sub);if(!access)throw problem('WORKSPACE_REQUIRED',403);
       if(!access.last_verified_at||Date.now()-Date.parse(access.last_verified_at)>5*60000){await workspaceStatus(env,user,cors);access=await getWorkspaceAccess(env.DB,user.sub);if(!access)throw problem('DRIVE_ACCESS_REVOKED',403);}
-      if(url.pathname==='/api/desktop-reminders'&&request.method==='POST'){
-        const now=new Date().toISOString(),since=new Date(Date.now()-86400000).toISOString();
-        // Restart recurring schedules even after the desktop has been offline for days.
-        const stale=await env.DB.prepare(`SELECT r.*,e.start_at AS source_start,e.repeat_rule FROM reminders r JOIN events e ON e.workspace_id=r.workspace_id AND e.id=r.source_id WHERE r.workspace_id=? AND r.source_type='event' AND r.cancelled=0 AND e.completed=0 AND e.deleted_at IS NULL AND e.repeat_rule<>'' AND r.trigger_at<? AND NOT EXISTS(SELECT 1 FROM reminders f WHERE f.workspace_id=r.workspace_id AND f.source_id=r.source_id AND f.offset_minutes=r.offset_minutes AND f.cancelled=0 AND f.trigger_at>?) GROUP BY r.source_id,r.offset_minutes LIMIT 8`).bind(access.workspace_id,since,now).all();
-        for(const r of stale.results)await scheduleNextReminder(env,{...r,timezone:access.timezone});
-        const due=await env.DB.prepare(`SELECT r.*,e.start_at AS source_start,e.repeat_rule FROM reminders r LEFT JOIN events e ON r.source_type='event' AND e.workspace_id=r.workspace_id AND e.id=r.source_id LEFT JOIN notes n ON r.source_type='note' AND n.workspace_id=r.workspace_id AND n.id=r.source_id WHERE r.workspace_id=? AND r.cancelled=0 AND r.trigger_at>=? AND r.trigger_at<=? AND ((e.id IS NOT NULL AND e.completed=0 AND e.deleted_at IS NULL) OR (n.id IS NOT NULL AND n.completed=0 AND n.deleted_at IS NULL)) ORDER BY r.trigger_at DESC LIMIT 32`).bind(access.workspace_id,since,now).all();
-        for(const r of due.results)if(r.source_type==='event'&&r.repeat_rule)await scheduleNextReminder(env,{...r,timezone:access.timezone});
-        return json({ok:true,reminders:due.results.map(r=>({id:r.id,title:r.title,triggerAt:r.trigger_at}))},200,cors);
-      }
       if(url.pathname==='/api/workspace/members')return workspaceMembers(env,access,cors);
       if(url.pathname==='/api/sync')return json(await snapshot(env,access,url.searchParams.get('since')),200,cors);
       if(url.pathname==='/api/snapshot')return json(await snapshot(env,access),200,cors);

@@ -1,7 +1,6 @@
 import {getMeta,setMeta} from './db.js';
 import {setAccessToken,getAccessToken,setSessionToken,getSessionToken,setRefreshHook} from './api.js';
 const cfg=window.APP_CONFIG;
-const desktop=window.calendarDesktop;
 let expiry=0,refreshPromise=null,silentPromise=null,silentRetryAt=0,authConfig=null,configCheckedAt=0,restoredProfile=null;
 let authState={phase:'signed-out',persistent:false,configAvailable:false,serverReady:false,lastRestoredAt:0,sessionExpiresAt:0,reason:''};
 const base=()=>cfg.API_BASE_URL.replace(/\/$/,'');
@@ -17,10 +16,6 @@ export async function getAuthConfig(force=false){
   catch(e){setState({configAvailable:false,reason:'AUTH_CONFIG_UNAVAILABLE'});if(authConfig)return authConfig;return {persistent:false,available:false}}
 }
 export async function restoreSession(legacy=null){
- if(desktop){const saved=await desktop.call('session');await setMeta('serverSession',null);await setMeta('googleSession',null);
- restoredProfile=saved?.profile||await getMeta('lastProfile',null);setSessionToken(saved?.sessionToken||'');setAccessToken('');expiry=0;
- setState({phase:saved?'restoring':'signed-out',persistent:!!saved,sessionExpiresAt:Number(saved?.sessionExpiresAt||0),reason:''});setRefreshHook(refreshAccess);return restoredProfile;}
-
   let stored=await getMeta('googleSession',null);
   if(!stored&&legacy?.meta.googleSession){stored=legacy.meta.googleSession;await setMeta('googleSession',stored)}
   const persistent=await getMeta('serverSession',null);expiry=Number(stored?.expiresAt||0);
@@ -46,18 +41,15 @@ export async function refreshAccess(force=false){
   if(!getSessionToken()){if(expiry<=Date.now()){setAccessToken('');if(restoredProfile){await silentLogin(restoredProfile);return getAccessToken()}throw Object.assign(new Error('GOOGLE_LOGIN_REQUIRED'),{status:401})}return getAccessToken()}
   refreshPromise=(async()=>{
     try{const r=await request('/api/auth/token',{method:'POST',headers:{Authorization:`Bearer ${getSessionToken()}`},body:'{}'});await rememberAccess(r);setState({phase:'connected',persistent:!!r.persistent,lastRestoredAt:Date.now(),sessionExpiresAt:Number(r.sessionExpiresAt||authState.sessionExpiresAt),reason:r.persistent?'':'SESSION_UPGRADE_REQUIRED'});return r.accessToken}
-    catch(e){if(e.status===401){setSessionToken('');setAccessToken('');await setMeta('serverSession',null);await setMeta('googleSession',null);if(desktop)await desktop.call('clear')}throw e}
+    catch(e){if(e.status===401){setSessionToken('');setAccessToken('');await setMeta('serverSession',null);await setMeta('googleSession',null)}throw e}
   })().finally(()=>{refreshPromise=null});return refreshPromise;
 }
 async function rememberAccess(r){
   expiry=Date.now()+Number(r.expiresIn||3600)*1000-60000;setAccessToken(r.accessToken);restoredProfile=r.profile||restoredProfile;
-  await setMeta('lastProfile',restoredProfile);
-  if(desktop)return; // DPAPI native vault owns the persistent session; short-lived tokens remain in memory.
-  await setMeta('googleSession',{token:r.accessToken,expiresAt:expiry,profile:restoredProfile});
+  await setMeta('googleSession',{token:r.accessToken,expiresAt:expiry,profile:restoredProfile});await setMeta('lastProfile',restoredProfile);
   if(getSessionToken())await setMeta('serverSession',{token:getSessionToken(),profile:restoredProfile,expiresAt:Number(r.sessionExpiresAt||authState.sessionExpiresAt||0)});
 }
 export async function silentLogin(profile=restoredProfile){
- if(desktop)throw Object.assign(new Error('GOOGLE_LOGIN_REQUIRED'),{status:401});
   if(getSessionToken()||getAccessToken())return resumeAuthentication();
   if(!navigator.onLine)throw Object.assign(new Error('OFFLINE'),{temporary:true});
   if(!profile)throw Object.assign(new Error('GOOGLE_LOGIN_REQUIRED'),{status:401});
@@ -84,11 +76,9 @@ export async function waitGoogle(){
   if(!document.querySelector('script[data-google]')){const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;script.dataset.google='true';document.head.append(script)}
   const begin=Date.now();while(!window.google?.accounts?.oauth2){if(Date.now()-begin>10000)throw new Error('Google 登入服務載入逾時，請稍後重試');await new Promise(r=>setTimeout(r,100))}
 }
-export async function prepareLogin(){if(desktop){await getAuthConfig(true);return}await Promise.all([getAuthConfig(true),waitGoogle()]);}
+export async function prepareLogin(){await Promise.all([getAuthConfig(true),waitGoogle()]);}
 // Google requires user activation for first authorization or renewed consent. Daily startup uses resumeAuthentication instead.
 export function login(onSuccess,onError){
- if(desktop){desktop.call('login').then(async r=>{setSessionToken(r.sessionToken);await rememberAccess(r);localStorage.removeItem('calendarDesktopSignedOut');setState({phase:'connected',persistent:true,lastRestoredAt:Date.now(),sessionExpiresAt:r.sessionExpiresAt,reason:''});await onSuccess(r.profile);}).catch(onError);return;}
-
   if(!window.google?.accounts?.oauth2){onError(new Error('登入服務尚未載入，請稍後再按一次'));prepareLogin().catch(()=>{});return;}
   if(authConfig?.persistent){
     const client=google.accounts.oauth2.initCodeClient({client_id:cfg.GOOGLE_CLIENT_ID,scope:cfg.GOOGLE_SCOPES,ux_mode:'popup',select_account:false,
@@ -99,7 +89,6 @@ export function login(onSuccess,onError){
   }
 }
 export async function logout(){
- if(desktop){await desktop.call('logout');localStorage.setItem('calendarDesktopSignedOut','1')}
   const session=getSessionToken();if(session){try{await request('/api/auth/logout',{method:'POST',headers:{Authorization:`Bearer ${session}`},body:'{}'})}catch{/* Local sign-out still succeeds offline; server session expires automatically. */}}
   setAccessToken('');setSessionToken('');expiry=0;restoredProfile=null;setState({phase:'signed-out',persistent:false,lastRestoredAt:0,sessionExpiresAt:0,reason:''});
   await setMeta('googleSession',null);await setMeta('serverSession',null);await setMeta('lastProfile',null);

@@ -9,3 +9,26 @@ dialog{padding:0;border:1px solid var(--line);border-radius:20px;background:var(
 @media(max-width:767px) and (max-height:690px){.calendar-board{flex-basis:51%;min-height:226px}.app-header{padding-top:5px;padding-bottom:5px}.calendar-main{gap:7px}.day-cell{padding:2px}.week-number{padding-top:5px}.day-content .holiday-chip{display:none}.day-cell.holiday .day-num{color:var(--holiday-text);background:var(--holiday)}.list-item{padding:10px}.list-item .meta{font-size:.78rem}.item-icons{display:none}.calendar-day-panel .hint{margin:0}.nav-btn{min-height:49px}}
 @media(max-width:767px) and (orientation:landscape){body[data-view="calendar"] #main{overflow:auto}.calendar-main{height:auto;min-height:100%}.calendar-board{height:350px;flex:auto}.calendar-day-panel{min-height:200px}.calendar-day-panel .list{max-height:240px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+/* V2.2.2: fixed view headers; only the content lists scroll. */
+body[data-view="notes"] #main,body[data-view="calendar"] #main{overflow:hidden;scrollbar-gutter:auto}
+#notesView.active{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}
+#notesView>.page-head,#notesView>.search-wrap,#notesView>.filter-row{flex:0 0 auto}
+#notesList{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;align-content:start;overscroll-behavior:contain;scrollbar-gutter:stable;padding:3px 3px 12px;-webkit-overflow-scrolling:touch}
+#dayEvents{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;padding:3px 3px 8px;-webkit-overflow-scrolling:touch}
+.calendar-main,.calendar-board,.calendar-day-panel{min-height:0}
+.calendar-board>.toolbar,.calendar-board>.calendar-search,.calendar-board>.weekday-row,.calendar-board>.calendar-legend{flex-shrink:0}
+@media(max-width:767px){
+ .calendar-board{flex:0 0 min(52%,385px);min-height:0}
+ .calendar-day-panel{min-height:0;overflow:hidden}
+}
+@media(max-width:767px) and (orientation:landscape){
+ .calendar-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(190px,.85fr);height:100%;min-height:0;gap:12px}
+ .calendar-board{height:100%;min-height:0}
+ .calendar-day-panel{height:100%;min-height:0}
+ .calendar-day-panel .list{max-height:none}
+}
+@media(max-height:500px){
+ #notesView>.page-head,#notesView>.search-wrap{margin-bottom:6px}
+ #notesView>.filter-row{margin-bottom:4px;padding-bottom:4px}
+}

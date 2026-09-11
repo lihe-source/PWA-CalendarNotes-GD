@@ -32,28 +32,18 @@ async function boot(){
   await loadLocal();state.driveRoot=await getMeta('lastDriveRoot',legacy?.meta.driveRoot||'');$('#driveFolderInput').value=state.driveRoot;
   const theme=localStorage.getItem('calendarNotesTheme')||legacy?.meta.theme||'dark';applyTheme(theme);
   const oldStyle=localStorage.getItem('calendarNotesUiStyle');applyStyle(localStorage.getItem('calendarNotesUiStyleV2')||(oldStyle&&oldStyle!=='cartoon-lime'?oldStyle:'mint'));
-  state.selected=await getMeta('selectedDate',today());const [y,m]=state.selected.split('-').map(Number);state.year=y;state.month=m;
+  state.selected=today();activeDay=state.selected;const [y,m]=state.selected.split('-').map(Number);state.year=y;state.month=m;
   $('#currentVersion').textContent=cfg.VERSION;$('#headerVersion').textContent=cfg.VERSION;
   bindUi();renderAll();updateQueueStatus();setupViewport();
   registerWorker().then(()=>checkUpdate(true)).catch(e=>{$('#updateStatus').textContent=friendly(e)});
   prepareLogin().then(()=>{state.authReady=true;renderSettings();if(state.profile&&!connected())task(()=>resumeAutomaticLogin())}).catch(()=>{state.authReady=true;renderSettings()});
   if(state.profile&&connected()&&navigator.onLine)task(()=>resumeAutomaticLogin());
   else status(state.profile?'本機資料已載入；連線後自動同步':'本機模式 · 登入後可同步');
-  setInterval(()=>{if(!window.calendarDesktop&&document.visibilityState==='visible'&&connected()&&navigator.onLine&&!state.restoring)task(()=>syncAll(false))},cfg.AUTO_SYNC_INTERVAL_MS);
+  setInterval(()=>{if(document.visibilityState==='visible'&&connected()&&navigator.onLine&&!state.restoring)task(()=>syncAll(false))},cfg.AUTO_SYNC_INTERVAL_MS);
   addEventListener('online',()=>{status('已連線，準備同步…');task(()=>prepareLogin().finally(()=>{state.authReady=true;renderSettings()}));if(state.profile)task(()=>resumeAutomaticLogin());task(()=>checkUpdate(true))});
   addEventListener('offline',()=>status('離線模式 · 修改保留在此裝置'));
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){task(()=>checkUpdate(true));if(state.profile&&navigator.onLine)task(()=>resumeAutomaticLogin())}});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){if(state.selected&&activeDay!==today())selectToday();task(()=>checkUpdate(true));if(state.profile&&navigator.onLine)task(()=>resumeAutomaticLogin())}});
   addEventListener('beforeunload',e=>{if(state.saving||state.restoring){e.preventDefault();e.returnValue=''}});
-  if(window.calendarDesktop){
-    window.calendarDesktopCanExit=()=>!(state.saving||state.restoring||state.backingUp||state.syncing||state.editing?.dirty);
-    window.calendarDesktopLogin=()=>{
-      if(state.authBusy||state.saving||state.restoring||state.backingUp||state.editing?.dirty){toast('請先完成目前的工作');return}
-      state.authBusy=true;renderSettings();login(async profile=>{try{await onLogin(profile)}finally{state.authBusy=false;renderSettings()}},e=>{state.authBusy=false;renderSettings();toast(friendly(e))});
-    };
-    window.calendarDesktopTick=()=>{if(!navigator.onLine||state.restoring||state.authBusy)return;if(state.profile&&!connected())task(()=>resumeAutomaticLogin());else if(connected())task(()=>state.workspace?syncAll(false):connectWorkspace(false));};
-    await window.calendarDesktop.call('ready');
-    if(!connected()&&!localStorage.getItem('calendarDesktopSignedOut')&&!state.profile)window.calendarDesktopLogin();
-  }
   openDeepLink(location.href);
 }
 function bindUi(){
@@ -68,7 +58,7 @@ function bindUi(){
   $('#editorForm').onsubmit=e=>{e.preventDefault();task(saveEditor)};$('#editorCloseBtn').onclick=()=>task(closeEditor);$('#editorCancelBtn').onclick=()=>task(closeEditor);
   $('#editorDialog').addEventListener('cancel',e=>{e.preventDefault();task(closeEditor)});$('#editorDialog').addEventListener('close',()=>{setupViewport();activateReadyUpdate()});
   $('#deleteItemBtn').onclick=()=>task(deleteEditor);$('#cancelUploadBtn').onclick=()=>uploadController?.abort();
-  $('#googleLoginBtn').onclick=()=>window.calendarDesktop?window.calendarDesktopLogin?.():login(profile=>task(()=>onLogin(profile)),e=>toast(friendly(e)));$('#googleLogoutBtn').onclick=()=>task(signOut);
+  $('#googleLoginBtn').onclick=()=>login(profile=>task(()=>onLogin(profile)),e=>toast(friendly(e)));$('#googleLogoutBtn').onclick=()=>task(signOut);
   $('#verifyDriveBtn').onclick=()=>task(joinFolder);$('#backupBtn').onclick=()=>task(backupNow);$('#restoreBtn').onclick=()=>task(previewCloudRestore);
   $('#exportBtn').onclick=()=>task(()=>downloadBackup(makeBackup(),'calendar-backup'));$('#importBtn').onclick=()=>$('#importFile').click();$('#importFile').onchange=()=>task(async()=>{const file=$('#importFile').files[0];if(!file)return;if(file.size>1500000)throw new Error('備份檔案過大（上限約 1.5 MB）');const data=JSON.parse(await file.text());await previewRestore(data,file.name);$('#importFile').value=''});
   $('#guestImportBtn').onclick=()=>task(importGuest);$('#recoverBtn').onclick=()=>task(recoverRestore);
@@ -78,14 +68,16 @@ function bindUi(){
   $('#addCategoryBtn').onclick=()=>task(addCategory);$('#newCategory').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();task(addCategory)}};
   $('#timezoneInput').onchange=()=>task(async()=>{const tz=$('#timezoneInput').value.trim();if(!validTimezone(tz))throw new Error('INVALID_TIMEZONE');state.timezone=tz;await setMeta('timezone',tz);await savePreferences();renderAll()});
   $('#checkUpdateBtn').onclick=()=>task(()=>checkUpdate(false));$('#forceUpdateBtn').onclick=()=>task(()=>checkUpdate(false,true));
-  $('#main').onscroll=()=>$('#toTopBtn').classList.toggle('hidden',$('#main').scrollTop<300);$('#toTopBtn').onclick=()=>$('#main').scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+  const scrollArea=()=>state.view==='notes'?$('#notesList'):state.view==='calendar'?$('#dayEvents'):$('#main');for(const el of [$('#main'),$('#notesList'),$('#dayEvents')])el.onscroll=()=>$('#toTopBtn').classList.toggle('hidden',scrollArea().scrollTop<300);$('#toTopBtn').onclick=()=>scrollArea().scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
   let touch=null;$('#monthGrid').addEventListener('touchstart',e=>{if(e.touches.length===1)touch={x:e.touches[0].clientX,y:e.touches[0].clientY}},{passive:true});$('#monthGrid').addEventListener('touchend',e=>{if(!touch)return;const dx=e.changedTouches[0].clientX-touch.x,dy=e.changedTouches[0].clientY-touch.y;touch=null;if(Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)*1.5)changeMonth(dx<0?1:-1)},{passive:true});
 }
 function applyTheme(theme){const value=theme==='light'?'light':'dark';document.documentElement.dataset.theme=value;localStorage.setItem('calendarNotesTheme',value);document.querySelector('meta[name="theme-color"]').content=value==='light'?'#f3f7f6':'#111a24';$$('.theme-option').forEach(b=>b.classList.toggle('active',b.dataset.themeChoice===value))}
 function applyStyle(style){if(![...$('#uiStyleSelect').options].some(o=>o.value===style))style='mint';document.documentElement.dataset.uiStyle=style;$('#uiStyleSelect').value=style;localStorage.setItem('calendarNotesUiStyleV2',style)}
-function showView(name){if(!['calendar','notes','settings'].includes(name))return;state.view=name;document.body.dataset.view=name;$$('.view').forEach(x=>x.classList.toggle('active',x.id===name+'View'));$$('.nav-btn[data-view]').forEach(x=>{x.classList.toggle('active',x.dataset.view===name);if(x.dataset.view===name)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current')});$('#main').scrollTop=0;$('#toTopBtn').classList.add('hidden');if(name==='settings')task(refreshPush)}
+function showView(name){if(!['calendar','notes','settings'].includes(name))return;if(name==='calendar'&&state.view!=='calendar')selectToday();state.view=name;document.body.dataset.view=name;$$('.view').forEach(x=>x.classList.toggle('active',x.id===name+'View'));$$('.nav-btn[data-view]').forEach(x=>{x.classList.toggle('active',x.dataset.view===name);if(x.dataset.view===name)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current')});$('#main').scrollTop=0;$('#toTopBtn').classList.add('hidden');if(name==='settings')task(refreshPush)}
 function changeMonth(delta){const d=new Date(Date.UTC(state.year,state.month-1+delta,1));state.year=d.getUTCFullYear();state.month=d.getUTCMonth()+1;const wanted=Number(state.selected.slice(8));selectDate(dateKey(state.year,state.month,Math.min(wanted,new Date(Date.UTC(state.year,state.month,0)).getUTCDate())))}
-function selectDate(key){state.selected=key;setMeta('selectedDate',key).catch(()=>{});renderCalendar();renderDay()}
+function selectDate(key){state.selected=key;$('#dayEvents').scrollTop=0;renderCalendar();renderDay()}
+let activeDay='';
+function selectToday(){activeDay=today();const [y,m]=activeDay.split('-').map(Number);state.year=y;state.month=m;selectDate(activeDay);}
 function isoWeek(d){const t=new Date(d);const n=t.getUTCDay()||7;t.setUTCDate(t.getUTCDate()+4-n);return Math.ceil(((t-Date.UTC(t.getUTCFullYear(),0,1))/86400000+1)/7)}
 function eventsOn(key){return state.events.filter(e=>occursOn(e,key,state.timezone))}
 function renderCalendar(){
@@ -118,7 +110,6 @@ function renderSettings(){
   $('#googleStatus').textContent=state.authBusy?'正在背景恢復 Google 登入與共享資料…':retrying?'目前離線或服務暫時無法連線；稍後會自動重試。':p?(active?'帳號已連線，資料會在背景同步。':'授權已失效；本機資料仍保留。'):'首次使用需完成一次 Google 授權。';
   const expiryText=auth.sessionExpiresAt?` · 閒置期限 ${formatDateTime(new Date(auth.sessionExpiresAt))}`:'';
   $('#autoLoginStatus').textContent=auth.persistent?`伺服器自動登入已啟用${expiryText}`:auth.phase==='legacy-auto'?'已透過瀏覽器的 Google 工作階段自動登入，不需要再按重新授權。':!state.authReady?'正在檢查自動登入設定…':auth.serverReady?(p?'正在改用現有 Google 工作階段自動連線。':'自動登入服務已就緒；首次連線後會自動保持登入。'):auth.configAvailable?'已啟用瀏覽器工作階段自動登入；伺服器長效登入設定見 DEPLOY.md。':'暫時無法確認自動登入服務，恢復連線後會重試。';
-  if(window.calendarDesktop){$('#googleLoginBtn').disabled=state.authBusy;$('#googleLogoutBtn').disabled=state.authBusy;if(!auth.persistent)$('#autoLoginStatus').textContent=auth.serverReady?'首次授權會在系統瀏覽器開啟，之後由桌面程式自動恢復登入。':'請先部署 V3 Worker 並完成長效登入設定。';}
   $('#workspaceStatus').textContent=state.workspace?`${state.workspace.name||'共享行事曆'} · ${{owner:'擁有者',editor:'可編輯',viewer:'唯讀'}[state.workspace.role]||''} · ${state.members.length||'—'} 位成員`:'登入後可加入共享工作區。';
   $('#workspaceMembers').innerHTML=state.members.map(m=>`<div class="workspace-member">${esc(m.name||m.email)}<small>${esc(m.email)} · ${{owner:'擁有者',editor:'編輯者',viewer:'唯讀'}[m.role]||''}</small></div>`).join('');$('#driveStatus').textContent=state.workspace?'共享資料夾已連線':state.driveRoot?'已記住資料夾，等待連線確認':'';$('#lastSync').textContent=formatDateTime(state.lastSync);
   ['quickAddBtn','addEventBtn','addNoteBtn','saveItemBtn','deleteItemBtn','restoreBtn','addCategoryBtn'].forEach(id=>$('#'+id).disabled=!canEdit());$('#backupBtn').disabled=state.backingUp||state.saving||state.restoring||state.workspace?.role==='viewer';$('#syncBtn').disabled=state.syncing||state.restoring;$('#timezoneInput').disabled=state.workspace?.role==='viewer';renderCategories();
@@ -221,7 +212,6 @@ async function joinFolder(){
   const r=await api('/api/workspace/join',{method:'POST',body:JSON.stringify({drive_root_folder_id:root})});if(!r.joined)throw new Error('未能加入共享工作區');state.driveRoot=root;state.workspace=null;await setMeta('lastDriveRoot',root);await connectWorkspace(true);
 }
 async function signOut(){
-  if(state.authBusy){toast('登入處理中，請完成後再登出');return}
   if(state.saving||state.restoring||state.backingUp){toast('請等待目前的儲存、還原或備份完成');return}if(syncPromise)await syncPromise.catch(()=>{});
   const count=await updateQueueStatus();if(count&&!confirm(`尚有 ${count} 個項目未同步。登出會保留在此帳號的本機資料區，下次登入同帳號才會繼續同步。確定登出？`))return;
   await disconnectPush().catch(()=>{});await logout();state.profile=null;state.workspace=null;state.members=[];state.folders=null;await setScope();await loadLocal();renderAll();await updateQueueStatus();status('已登出 · 本機模式');
@@ -272,8 +262,8 @@ async function confirmRestore(){
   }catch(e){$('#restoreProgress').textContent=`${friendly(e)} 若連線在回應前中斷，請先重新同步確認結果，再重新預覽。`;throw e}
   finally{state.restoring=false;$('#restoreConfirmBtn').disabled=false;$('#restoreCancelBtn').disabled=false;$('#restoreCloseBtn').disabled=false;renderSettings();await updateQueueStatus();activateReadyUpdate()}
 }
-async function resumePush(){if(window.calendarDesktop||!state.workspace)return;const sub=await subscriptionState();if(sub.subscription&&sub.permission==='granted')await enablePush({requestPermission:false});await refreshPush()}
-async function refreshPush(){if(window.calendarDesktop){$('#pushStatus').textContent='桌面提醒由通知區常駐程式每分鐘檢查。';$('#pushDiagnostics').textContent='可於通知區選單測試桌面通知；Windows 勿擾模式可能隱藏提醒。喚醒後補查最近 24 小時（最多 32 筆）。';for(const id of ['enablePushBtn','testPushBtn'])$('#'+id).disabled=true;return;}const info=await subscriptionState();$('#pushStatus').textContent=info.supported?(info.permission==='denied'?'通知已封鎖，請至瀏覽器或系統設定允許。':info.subscription?'此裝置已訂閱通知':info.permission==='granted'?'已允許通知，尚未完成此裝置訂閱':'尚未啟用通知'):'此環境未提供 Web Push；iPhone／iPad 請由加入主畫面的 App 開啟。';if(connected()&&state.workspace){try{const r=await api('/api/push/diagnostics');$('#pushDiagnostics').textContent=`伺服器設定：${r.configured?'完成':'尚未完成'}；帳號裝置 ${r.devices.length} 個。${r.deliveries.map(x=>`${{accepted:'服務已接受',retry:'等待重試',sending:'處理中',gone:'訂閱失效'}[x.status]||x.status} ${x.n}`).join('、')}。系統勿擾、通知摘要或權限可能影響畫面顯示。`}catch(e){$('#pushDiagnostics').textContent=friendly(e)}}}
+async function resumePush(){if(!state.workspace)return;const sub=await subscriptionState();if(sub.subscription&&sub.permission==='granted')await enablePush({requestPermission:false});await refreshPush()}
+async function refreshPush(){const info=await subscriptionState();$('#pushStatus').textContent=info.supported?(info.permission==='denied'?'通知已封鎖，請至瀏覽器或系統設定允許。':info.subscription?'此裝置已訂閱通知':info.permission==='granted'?'已允許通知，尚未完成此裝置訂閱':'尚未啟用通知'):'此環境未提供 Web Push；iPhone／iPad 請由加入主畫面的 App 開啟。';if(connected()&&state.workspace){try{const r=await api('/api/push/diagnostics');$('#pushDiagnostics').textContent=`伺服器設定：${r.configured?'完成':'尚未完成'}；帳號裝置 ${r.devices.length} 個。${r.deliveries.map(x=>`${{accepted:'服務已接受',retry:'等待重試',sending:'處理中',gone:'訂閱失效'}[x.status]||x.status} ${x.n}`).join('、')}。系統勿擾、通知摘要或權限可能影響畫面顯示。`}catch(e){$('#pushDiagnostics').textContent=friendly(e)}}}
 function setupViewport(){
   const viewport=window.visualViewport;const height=viewport?.height||innerHeight;document.documentElement.style.setProperty('--dialog-height',height+'px');document.documentElement.style.setProperty('--dialog-top',(viewport?.offsetTop||0)+'px');
   // The shell fills the layout viewport; only the editor follows the on-screen keyboard.
