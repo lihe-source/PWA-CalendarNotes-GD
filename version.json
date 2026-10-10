@@ -1,14 +1,14 @@
 {
-  "version": "V2.2.2",
-  "build": 222,
-  "releasedAt": "2026-09-11T14:16:24.435820+00:00",
-  "notes": "啟動及切回行事曆預設今天；行程與備註列表獨立捲動，固定月曆及標題。",
+  "version": "V3_0",
+  "build": 300,
+  "releasedAt": "2026-10-10T03:26:42.163Z",
+  "notes": "介面對比與可讀性、草稿與焦點修正、自動更新強化（每30分鐘檢查）、安裝圖示與通知徽章、後端寫入量降低、CSP。",
   "assets": {
-    "./": "a84e6c5f8bee11ef4066259096ab0c375e9c8c656a69ee0efc80b8bb3ad1d0ab",
-    "./index.html": "a84e6c5f8bee11ef4066259096ab0c375e9c8c656a69ee0efc80b8bb3ad1d0ab",
-    "./style.css": "82aad520f4fe4c18dd1f955e2937045eefeae5e18f418578915c57a7fc47efb4",
-    "./config.js": "13a8a716959da53e131ae22e15045c83691de809eb4893edca988c4c8af12cc5",
-    "./app.js": "5ea24be08e06ecc2ce7598c0a3d507f1fac4d7d152908a3856d6b60e53c7c127",
+    "./": "b3d839d6eb82547117f77dc4e00473300923904d33ca9899e91f496d0f21cdf6",
+    "./index.html": "b3d839d6eb82547117f77dc4e00473300923904d33ca9899e91f496d0f21cdf6",
+    "./style.css": "ea4dc96eed8e1e7e8ba48688fcd7a04831c435498313594917abaf46cf7d3edf",
+    "./config.js": "b206d71e943443d446ecab19d53573d5431cec9876e44e6f4c90a83fe869d831",
+    "./app.js": "786b3e2c3ee6cc213435dd599e04a8118cc82b7f5a8919c9ddecaac00f2ee8b9",
     "./db.js": "0cf4ea67c69139c8ea87a20092c733c99ed9a793539c64871a8ee4876e19c154",
     "./api.js": "85f1ab937ee340b5d686d60025035f9b41abd6e5cf3f6637f6188b8e2cc76c0b",
     "./auth.js": "08959ab9c3390f38a0054a1e7b8f42688537c492d8e37cf2030a4d6a20926acd",
@@ -16,9 +16,12 @@
     "./google-drive.js": "6de794bb6bcd4c87974b2198c6bcec5d6e25efa3afcc114d4c5365f8332beef7",
     "./push.js": "c5442b4e6280baf82b3cf3e35b0f9d8bcb0236899b8cf87be3307c511acd409b",
     "./holidays.js": "09c34397f91272eae30f0712e66f0f9364776c343cc55d6a72d723111709345c",
-    "./manifest.json": "dc513a8cde2c0481fcc554ecdec6812bffcf66c5b2c429e103b9074422de4421",
+    "./manifest.json": "a8250d97e44aae83aa019313646f686e6e6fe167e5175fb689b63d3196eb0217",
     "./icon-192.png": "30efc5a83b36f00b3aa361f89decbd789ee9c37f22eb848bf49a9d223cea20db",
     "./icon-512.png": "cf36c9c2a6e54b835a256398e81dbc8837f280e82e6dcbb3eb9e99b817b089c2",
-    "./apple-touch-icon.png": "7094246e06848ed215cee4839a67b236e9486966ecc39ba16a9887153d51f94d"
+    "./icon-maskable-512.png": "d8964229a71bedc378ab43d6a813f01718b0fc7ecfdf028a5279478d5ddef5b4",
+    "./badge-96.png": "619cc564faa2cf0a195a49ca20b7a372d72f5784ae7c9391432b2ac4edc73de9",
+    "./apple-touch-icon.png": "7094246e06848ed215cee4839a67b236e9486966ecc39ba16a9887153d51f94d",
+    "./theme-init.js": "5b0dc4c8d1609fd78e77a0b3a25a4d7e2ba7bc4da5284bc7e5c7bd295d8bb76a"
   }
 }

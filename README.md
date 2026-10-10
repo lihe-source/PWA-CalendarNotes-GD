@@ -1,11 +1,8 @@
-# V2.2.2 純 PWA 更新
+# 行事曆・備註 V3_0
 
-本包不含 EXE。回到 V2.2.1 網頁架構後，修正預設日期及列表捲動。部署與更新步驟請看 `UPDATE_V2_2_2.txt`。本次只需覆蓋 GitHub Pages 檔案，不需重新部署 Cloudflare。
+> V3_0：介面對比與可讀性、草稿與焦點修正、PWA 自動更新強化、安裝圖示與通知徽章、後端寫入量降低、頁面內容安全政策（CSP）。逐項內容與部署步驟請看 `UPDATE_V3_0.txt`；先前版本的重點保留在 `CHANGELOG.md`。
 
-# 行事曆・備註 V2.2.1
-
-> V2.2.1：修正兩個 PWA 共用 App ID 的問題。先閱讀 `PWA_INSTALL_FIX.md`，內含本版部署、保留資料與桌面重新安裝步驟。
-
+版號規則：`VX_Y`（例如 V3_0 → V3_1 … V3_9 → V4_0）。`config.js` 的 `VERSION` 使用此格式，`BUILD` 每次進版加 1。
 
 V2.2.0 針對電腦版反覆出現「重新授權」修正登入判斷：有效權杖不再顯示重新授權按鈕；短效權杖到期時，程式會使用瀏覽器現有的 Google 工作階段，以 `prompt: none` 在背景取得新權杖並繼續同步。Worker 長效會話仍是主要機制，若會話失效也會先嘗試無提示恢復。
 
@@ -56,7 +53,7 @@ V2.2.0 針對電腦版反覆出現「重新授權」修正登入判斷：有效�
 
 | 範圍 | 檔案 |
 | --- | --- |
-| GitHub Pages 必需 | index.html、style.css、config.js、app.js、api.js、db.js、auth.js、recurrence.js、google-drive.js、push.js、holidays.js、service-worker.js、manifest.json、version.json、icon-192.png、icon-512.png、apple-touch-icon.png、.nojekyll |
+| GitHub Pages 必需 | index.html、style.css、config.js、theme-init.js、app.js、api.js、db.js、auth.js、recurrence.js、google-drive.js、push.js、holidays.js、service-worker.js、manifest.json、version.json、icon-192.png、icon-512.png、icon-maskable-512.png、badge-96.png、apple-touch-icon.png、.nojekyll |
 | Worker | worker.js、server-auth.js、recurrence.js、wrangler.jsonc、package.json、package-lock.json |
 | D1 | schema.sql（全新資料庫）、migrate_v2_0_0.sql（現有 V1.5+ 升級）、migrate_v1_5_0.sql（僅更舊資料庫需要） |
 | 發布與設定 | release.mjs、generate-auth-key.mjs、generate-vapid.mjs |
@@ -64,7 +61,7 @@ V2.2.0 針對電腦版反覆出現「重新授權」修正登入判斷：有效�
 
 ## 修改程式後再發布
 
-1. 在 config.js 提升 VERSION 與 BUILD（例如 V2.0.1、201）。
+1. 在 config.js 提升 VERSION（VX_Y 格式）與 BUILD（例如 V3_1、301）。
 2. 執行 `npm run release`，重建資產校驗資訊並同步套件與 Service Worker 版本。
 3. 後端有改動時重新 `npm run deploy`。
 4. 一次提交全部前端變更；避免只更新 version.json。

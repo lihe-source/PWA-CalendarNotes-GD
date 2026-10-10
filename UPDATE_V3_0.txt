@@ -1,0 +1,49 @@
+V3_0 更新說明（版號規則：VX_Y，下一版 V3_1，V3_9 之後為 V4_0）
+
+一、本版內容
+A 修正
+ A2 編輯既有行程後按「新增」不再誤開舊項目；附件上傳失敗後不再殘留草稿；還原的草稿可按「捨棄草稿」。
+ A3 手機版可使用「搜尋行程」。
+ A4 背景同步（每 60 秒）若資料沒變，不再重繪月曆／列表／設定，避免焦點被重設。
+ A5 關閉編輯視窗後，焦點回到原本的按鈕。
+ A1 Worker /api/health 版本與前端一致（由 release.mjs 自動同步）。
+B 介面
+ B1 淺色主題文字用色另設變數，11 款配色（淺色／深色共 22 組）文字對比皆 4.5:1 以上。
+ B2 週六、週日標題色加深（淺色主題）。
+ B3 最小字級 13px。
+C 自動更新
+ C1 App 持續開啟時，每 30 分鐘自動檢查新版（原本只有啟動、回前景、重新連線時檢查）。
+ C2 更新完成後顯示「已更新至 Vx_y：版本說明」；設定頁顯示最新版說明。
+ C3 新增選用的 GitHub Actions（.github/workflows/release.yml）：忘記執行 release 時自動重建 version.json。不需要可刪除。
+ C4 版號改為 VX_Y；release.mjs、Service Worker、Worker 皆支援。
+D 安裝
+ D1 圖示拆分 any / maskable（新增 icon-maskable-512.png）；通知新增徽章 badge-96.png。
+ D2 manifest 的 start_url、scope 改為相對路徑（id 維持不變，已安裝的 PWA 不受影響）。
+ D3 manifest 補語言、說明、分類；加入 mobile-web-app-capable。
+E 後端與安全
+ E1 使用者資料僅在變更或超過 1 小時才寫入 D1（減少寫入額度消耗）。
+ E5 index.html 加入內容安全政策（CSP）；主題初始化改為外部檔 theme-init.js。
+F3 新增 .gitignore；README 與 CHANGELOG 整理。
+
+二、檔案清單（相對於 V2.2.2）
+ 修改：app.js、style.css、index.html、manifest.json、service-worker.js、config.js、version.json、
+       worker.js、release.mjs、package.json、package-lock.json、README.md、CHANGELOG.md、TEST_REPORT.md、
+       FILES_AND_EDIT_POINTS.txt
+ 新增：theme-init.js、icon-maskable-512.png、badge-96.png、.gitignore、
+       .github/workflows/release.yml、UPDATE_V3_0.txt
+ 未變：api.js、auth.js、db.js、recurrence.js、google-drive.js、push.js、holidays.js、server-auth.js、
+       desktop-auth.js、schema.sql、migrate_*.sql、wrangler.jsonc、icon-192.png、icon-512.png、
+       apple-touch-icon.png、generate-*.mjs、其他說明檔
+
+三、部署步驟
+ 1. 將 ZIP 內「資料夾裡面的檔案」（含 .github 資料夾與 .gitignore）覆蓋上傳到 GitHub 儲存庫根目錄，一次提交。
+    不需要刪除任何舊檔；.nojekyll 請保留。
+ 2. 已安裝的 PWA 會自動下載並驗證新版，完成後自動切換（編輯、上傳、還原中會延後）。
+    也可在 設定 → 版本更新 按「檢查更新」，確認版本為 V3_0。
+ 3. Worker（建議，但非必要）：在專案資料夾執行 npm run deploy，E1 才會生效。不需要升級 D1。
+ 4. 若 Worker 網址不在 *.workers.dev 網域，請先修改 index.html 內 CSP 的 connect-src，
+    再執行 npm run release 重算檔案雜湊後才上傳。
+
+四、注意
+ - 修改任何前端檔案後都要執行 npm run release（或交給 GitHub Actions），否則新版會因雜湊不符而不啟用。
+ - 從 V2.2.2 升級到 V3_0 的這一次，不會顯示「已更新至」提示（舊版沒有記錄版本）；V3_0 之後的更新都會顯示。

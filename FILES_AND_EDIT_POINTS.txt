@@ -1,4 +1,5 @@
-CalendarNotesPWA V1.6.1 - 扁平化檔案
+CalendarNotesPWA V3_0 - 扁平化檔案
+（V3_0 新增：theme-init.js 主題初始化、icon-maskable-512.png、badge-96.png；CSP 設定在 index.html。）
 
 主要前端：index.html / app.js / style.css / config.js / service-worker.js
 Cloudflare Worker：worker.js / wrangler.jsonc

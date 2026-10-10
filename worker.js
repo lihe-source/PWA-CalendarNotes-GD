@@ -3,7 +3,10 @@ import {authenticate,persistentReady,exchangeCode,endSession} from './server-aut
 import {nextTrigger,occurrenceAt,dateKeyInZone,validTimezone} from './recurrence.js';
 
 async function upsertUser(db, user) {
+  // Only write when the profile changed or the row is older than one hour,
+  // so ordinary API calls do not consume a D1 write each time.
   const now = new Date().toISOString();
+  const stale = new Date(Date.now() - 3600000).toISOString();
   await db.prepare(`
     INSERT INTO users (user_sub, email, name, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
@@ -11,7 +14,10 @@ async function upsertUser(db, user) {
       email=excluded.email,
       name=excluded.name,
       updated_at=excluded.updated_at
-  `).bind(user.sub, user.email, user.name, now, now).run();
+    WHERE users.email IS NOT excluded.email
+       OR users.name IS NOT excluded.name
+       OR users.updated_at < ?
+  `).bind(user.sub, user.email, user.name, now, now, stale).run();
 }
 
 const SHARED_WORKSPACE_ID = 'shared-main';
@@ -324,7 +330,7 @@ export default {
     if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
     try{
       const origin=request.headers.get('Origin');if(origin&&cors['Access-Control-Allow-Origin']==='null')throw problem('ORIGIN_DENIED',403);
-      if(url.pathname==='/api/health')return json({ok:true,version:'V2.2.1',service:'calendar-notes-pwa-api'},200,cors);
+      if(url.pathname==='/api/health')return json({ok:true,version:'V3_0',service:'calendar-notes-pwa-api'},200,cors);
       if(url.pathname==='/api/auth/config')return json({ok:true,persistent:persistentReady(env),automaticResume:persistentReady(env),idleDays:30,maxDays:180},200,cors);
       if(url.pathname==='/api/auth/code'&&request.method==='POST')return json(await exchangeCode(request,env),200,cors);
       if(url.pathname==='/api/auth/logout'&&request.method==='POST')return json(await endSession(request,env),200,cors);
