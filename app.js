@@ -56,7 +56,7 @@ function bindUi(){
   $$('.nav-btn[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));
   $('#statusBtn').onclick=()=>showView('settings');$('#syncBtn').onclick=()=>task(()=>syncAll(true));
   $('#prevMonthBtn').onclick=()=>changeMonth(-1);$('#nextMonthBtn').onclick=()=>changeMonth(1);$('#todayBtn').onclick=()=>{selectDate(today());const [y,m]=state.selected.split('-').map(Number);state.year=y;state.month=m;renderCalendar()};
-  $('#eventSearch').oninput=renderDay;$('#noteSearch').oninput=renderNotes;
+  $('#eventSearch').oninput=renderDay;if(window.ResizeObserver)new ResizeObserver(scheduleFit).observe($('#monthGrid'));document.fonts?.ready.then(scheduleFit);$('#noteSearch').oninput=renderNotes;
   $$('.filter').forEach(b=>b.onclick=()=>{state.filter=b.dataset.filter;$$('.filter').forEach(x=>x.classList.toggle('active',x===b));renderNotes()});
   $('#addEventBtn').onclick=()=>task(()=>openEditor('events'));$('#addNoteBtn').onclick=()=>task(()=>openEditor('notes'));
   $('#quickAddBtn').onclick=()=>{if(canEdit())$('#quickDialog').showModal()};$('#quickClose').onclick=()=>$('#quickDialog').close();$('#quickDialog').addEventListener('close',activateReadyUpdate);
@@ -86,21 +86,35 @@ let activeDay='';
 function selectToday(){activeDay=today();const [y,m]=activeDay.split('-').map(Number);state.year=y;state.month=m;selectDate(activeDay);}
 function isoWeek(d){const t=new Date(d);const n=t.getUTCDay()||7;t.setUTCDate(t.getUTCDate()+4-n);return Math.ceil(((t-Date.UTC(t.getUTCFullYear(),0,1))/86400000+1)/7)}
 function eventsOn(key){return state.events.filter(e=>occursOn(e,key,state.timezone))}
+let fitRaf=0;
+function scheduleFit(){cancelAnimationFrame(fitRaf);fitRaf=requestAnimationFrame(fitCells)}
+// Show only the holiday label / events that fit completely inside each day cell; the rest become a "+N" badge.
+function fitCells(){
+  const grid=$('#monthGrid');if(!grid||!grid.clientHeight)return;
+  for(const cell of grid.children){
+    const box=cell.querySelector('.day-content'),badge=cell.querySelector('.day-count');if(!box||!badge)continue;
+    const events=[...box.querySelectorAll('.event-dot')],chip=box.querySelector('.holiday-chip'),over=()=>box.scrollHeight>box.clientHeight+1;
+    events.forEach(e=>{e.hidden=false});if(chip)chip.hidden=false;cell.classList.remove('compact-holiday');
+    let shown=events.length;while(shown>0&&over())events[--shown].hidden=true;
+    if(chip&&over()){chip.hidden=true;cell.classList.add('compact-holiday')}
+    const more=Number(cell.dataset.total||0)-shown;badge.hidden=more<=0;if(more>0)badge.textContent='+'+more;
+  }
+}
 function renderCalendar(){
   if(!state.year)return;$('#monthLabel').textContent=`${state.year} 年 ${state.month} 月`;$('#holidayHint').textContent=TAIWAN_HOLIDAY_OFFICIAL_YEARS.includes(state.year)?'假日以綠色標示':'此年份僅顯示固定日期假日';
   const first=new Date(Date.UTC(state.year,state.month-1,1)),start=new Date(first);start.setUTCDate(1-first.getUTCDay());const fragment=document.createDocumentFragment(),weeks=document.createDocumentFragment();
   for(let i=0;i<42;i++){
     const d=new Date(start);d.setUTCDate(start.getUTCDate()+i);const key=d.toISOString().slice(0,10),items=eventsOn(key),holiday=getTaiwanHoliday(key),button=document.createElement('button');
     button.type='button';button.className=['day-cell',d.getUTCMonth()+1!==state.month?'muted':'',[0,6].includes(d.getUTCDay())?'weekend':'',key===today()?'today':'',key===state.selected?'selected':'',holiday?'holiday':''].filter(Boolean).join(' ');button.setAttribute('aria-label',`${key}${holiday?' '+holiday.name:''}，${items.length} 個行程`);button.setAttribute('aria-pressed',String(key===state.selected));
-    button.innerHTML=`<span class="day-num">${d.getUTCDate()}</span><div class="day-content">${holiday?`<span class="holiday-chip" title="${esc(holiday.name)}">${esc(holiday.name)}</span>`:''}${items.slice(0,2).map(e=>`<span class="event-dot">${e.all_day?'':formatTime(e.start_at)+' '}${esc(e.title)}</span>`).join('')}${items.length>2?`<span class="more-dot">＋${items.length-2}</span>`:''}</div><span class="mobile-dots">${items.slice(0,3).map(()=>'<i></i>').join('')}</span>`;
-    button.onclick=()=>selectDate(key);fragment.append(button);
+    button.innerHTML=`<span class="day-num">${d.getUTCDate()}</span><div class="day-content">${holiday?`<span class="holiday-chip" title="${esc(holiday.name)}">${esc(holiday.name)}</span>`:''}${items.slice(0,6).map(e=>`<span class="event-dot">${e.all_day?'':formatTime(e.start_at)+' '}${esc(e.title)}</span>`).join('')}</div><span class="day-count" hidden></span><span class="mobile-dots">${items.slice(0,3).map(()=>'<i></i>').join('')}</span>`;
+    button.dataset.total=items.length;button.onclick=()=>selectDate(key);fragment.append(button);
     if(i%7===0){const marker=new Date(d);marker.setUTCDate(marker.getUTCDate()+4);const week=document.createElement('span');week.className='week-number';week.textContent=isoWeek(marker);weeks.append(week)}
   }
-  $('#monthGrid').replaceChildren(fragment);$('#weekNumbers').replaceChildren(weeks);
+  $('#monthGrid').replaceChildren(fragment);$('#weekNumbers').replaceChildren(weeks);scheduleFit();
 }
 function renderDay(){
   if(!state.selected)return;const d=new Date(state.selected+'T12:00:00Z'),q=$('#eventSearch').value.trim().toLowerCase();$('#selectedDateLabel').textContent=`${Number(state.selected.slice(5,7))}/${Number(state.selected.slice(8))} 星期${'日一二三四五六'[d.getUTCDay()]}`;
-  const items=(q?state.events.filter(e=>`${e.title} ${e.description} ${e.location}`.toLowerCase().includes(q)):eventsOn(state.selected)).sort((a,b)=>a.start_at.localeCompare(b.start_at));$('#daySummary').textContent=`${q?'搜尋結果':'當日事項'} ${items.length}`;
+  const items=(q?state.events.filter(e=>`${e.title} ${e.description} ${e.location}`.toLowerCase().includes(q)):eventsOn(state.selected)).sort((a,b)=>a.start_at.localeCompare(b.start_at));const hol=q?null:getTaiwanHoliday(state.selected);$('#daySummary').textContent=`${q?'搜尋結果':'當日事項'} ${items.length}${hol?' · '+hol.name:''}`;
   const box=$('#dayEvents');box.replaceChildren();if(!items.length){box.innerHTML=`<div class="empty-state">${icon('calendar')}${q?'找不到符合的行程':'這天沒有行程'}${q?'':'<br><button class="secondary" id="emptyAddEvent">新增行程</button>'}</div>`;$('#emptyAddEvent')?.addEventListener('click',()=>task(()=>openEditor('events')));return;}
   for(const e of items){const b=document.createElement('button');b.className='list-item';b.innerHTML=`<span class="event-time">${e.all_day?'全天':formatTime(e.start_at)}</span><div class="grow"><h4>${e.completed?'✓ ':''}${esc(e.title)}</h4><div class="meta">${q?formatDateTime(e.start_at)+' ':''}${esc(e.location||e.category||'')}${e.repeat_rule?' · 重複行程':''}</div>${e.description?`<p class="snippet">${esc(e.description.slice(0,100))}</p>`:''}<div class="item-icons">${e.reminder_minutes?.length?icon('bell'):''}${e.attachment_meta?.length?icon('clip')+`<span class="meta">${e.attachment_meta.length}</span>`:''}</div></div>`;b.onclick=()=>task(()=>openEditor('events',e));box.append(b)}
 }
@@ -277,7 +291,7 @@ function setupViewport(){
   // The shell fills the layout viewport; only the editor follows the on-screen keyboard.
   if(!$('#editorDialog').open)document.documentElement.style.setProperty('--app-height',innerHeight+'px');
 }
-addEventListener('resize',setupViewport);window.visualViewport?.addEventListener('resize',setupViewport);window.visualViewport?.addEventListener('scroll',setupViewport);
+addEventListener('resize',()=>{setupViewport();scheduleFit()});window.visualViewport?.addEventListener('resize',setupViewport);window.visualViewport?.addEventListener('scroll',setupViewport);
 async function registerWorker(){
   if(!('serviceWorker' in navigator))return;
   registration=await navigator.serviceWorker.register('./service-worker.js',{scope:'./',updateViaCache:'none'});
